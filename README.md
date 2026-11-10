@@ -1,5 +1,7 @@
 # JARVIS Deck
 
+![demo](docs/demo.gif)
+
 An open-source, standalone **control deck for your personal agent** — a single
 dark dashboard with a plasma neural orb, a 3D memory galaxy of everything your
 agent is working on, and a voice console you can talk to.
@@ -80,8 +82,8 @@ also runs inside the Hermes desktop app as a plugin unmodified.
 - [x] Memory galaxy
 - [x] Push-to-talk voice + TTS replies
 - [x] Config-driven backend (no personal data in the repo)
-- [ ] Demo GIF
-- [ ] Generic agent-adapter docs
+- [x] Demo GIF
+- [x] Agent-adapter docs ([docs/ADAPTERS.md](docs/ADAPTERS.md))
 
 ## License
 
