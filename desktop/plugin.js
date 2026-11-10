@@ -18,7 +18,7 @@ import {
   cn
 } from '@hermes/plugin-sdk'
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime'
-import { useEffect, useRef, useState, Component } from 'react'
+import { useEffect, useRef, useState, useMemo, Component } from 'react'
 
 let REST = null
 let openExternal = null // set in register(): ctx.os.openExternal, window.open fallback
@@ -2864,6 +2864,226 @@ function ReleasesCard() {
   })
 }
 
+// ------------------------------------------------------------ memory galaxy
+// 3D memory galaxy: kanban tasks / cron jobs / services as a slowly rotating
+// star cloud. Clusters by status; drag to rotate, wheel to zoom, click a star
+// to pull a center line + detail readout. 2D canvas projection — no WebGL.
+
+function _gHash(str) {
+  let h = 2166136261
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) }
+  return h >>> 0
+}
+function _gRng(seed) {
+  let a = seed >>> 0
+  return () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+const GALAXY_RGB = {
+  task_open: [92, 214, 255], task_done: [128, 138, 152],
+  cron_ok: [126, 231, 135], cron_bad: [248, 81, 73],
+  svc_up: [126, 231, 135], svc_down: [248, 81, 73],
+}
+function buildGalaxy(nodes, nowSec) {
+  const byCluster = new Map()
+  for (const n of nodes) {
+    if (!byCluster.has(n.cluster)) byCluster.set(n.cluster, [])
+    byCluster.get(n.cluster).push(n)
+  }
+  const keys = [...byCluster.keys()].sort()
+  const GOLD = Math.PI * (3 - Math.sqrt(5))
+  const out = []
+  keys.forEach((ck, ci) => {
+    const rng = _gRng(_gHash(ck))
+    // golden-spiral anchor placement (stable order, spread over the sphere)
+    const y = 1 - (2 * (ci + 0.5)) / keys.length
+    const rr = Math.sqrt(Math.max(0, 1 - y * y))
+    const th = GOLD * ci
+    const shell = 0.72 + 0.22 * rng()
+    const ax = Math.cos(th) * rr * shell, ay = y * shell, az = Math.sin(th) * rr * shell
+    const list = byCluster.get(ck)
+    const spread = 0.13 + 0.055 * Math.log2(1 + list.length)
+    for (const n of list) {
+      const nr = _gRng(_gHash(n.id))
+      const g = () => (nr() + nr() + nr()) / 1.5 - 1 // cheap gaussian-ish
+      const ageDays = n.ts ? (nowSec - n.ts) / 86400 : 999
+      const fresh = Math.max(0, 1 - ageDays / 30)
+      const base = n.source === 'service' ? 2.8 : n.color_key === 'task_done' ? 1.4 : 2.0
+      out.push({
+        n,
+        pos: [ax + g() * spread, ay + g() * spread * 0.8, az + g() * spread],
+        size: base + fresh * (n.source === 'service' ? 0.6 : 1.8),
+        alpha: n.color_key === 'task_done' ? 0.5 : 0.65 + fresh * 0.35,
+        fresh,
+      })
+    }
+  })
+  return out
+}
+function MemoryGalaxy() {
+  const q = useQuery({ queryKey: ['agentos', 'memory'], queryFn: () => REST('/memory'), refetchInterval: 120000 })
+  const nodes = (q.data && q.data.nodes) || []
+  const nowSec = Math.floor(Date.now() / 1000)
+  const model = useMemo(() => buildGalaxy(nodes, nowSec), [nodes]) // eslint-disable-line
+  const wrapRef = useRef(null)
+  const cvRef = useRef(null)
+  const [sel, setSel] = useState(null)
+  const cam = useRef({ yaw: 0.6, pitch: 0.35, zoom: 1, auto: true })
+  const ptr = useRef({ down: false, moved: 0, lx: 0, ly: 0, hov: -1, hx: 0, hy: 0 })
+  const selRef = useRef(null)
+  selRef.current = sel
+  useEffect(() => {
+    const cv = cvRef.current, wrap = wrapRef.current
+    if (!cv || !wrap || !model.length) return
+    const ctx = cv.getContext('2d')
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+    let raf = 0, W = 0, H = 0, dpr = Math.min(devicePixelRatio || 1, 2), stop = false
+    const accRaw = getComputedStyle(wrap).getPropertyValue('--ui-accent').trim()
+    const acc01 = cssColorToRgb(accRaw) || [0.36, 0.84, 1]
+    const accent = [Math.round(acc01[0] * 255), Math.round(acc01[1] * 255), Math.round(acc01[2] * 255)]
+    const resize = () => {
+      const r = wrap.getBoundingClientRect()
+      W = Math.max(80, r.width); H = Math.max(80, r.height)
+      cv.width = W * dpr; cv.height = H * dpr
+      cv.style.width = W + 'px'; cv.style.height = H + 'px'
+    }
+    resize()
+    const ro = new ResizeObserver(resize); ro.observe(wrap)
+    const render = (ts) => {
+      if (stop) return
+      raf = requestAnimationFrame(render)
+      const t = ts / 1000
+      const c = cam.current
+      if (c.auto && !reduced && !ptr.current.down) c.yaw += 0.0016
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, W, H)
+      const cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.5 * c.zoom
+      const cy_ = Math.cos(c.yaw), sy_ = Math.sin(c.yaw), cx_ = Math.cos(c.pitch), sx_ = Math.sin(c.pitch)
+      const FOV = 2.4
+      const P = [] // projected: [x, y, scale]
+      for (const m of model) {
+        const [x, y, z] = m.pos
+        const x1 = x * cy_ + z * sy_, z1 = -x * sy_ + z * cy_
+        const y2 = y * cx_ - z1 * sx_, z2 = y * sx_ + z1 * cx_
+        const s = FOV / (FOV + z2)
+        P.push([cx + x1 * s * R, cy + y2 * s * R, s])
+      }
+      // cluster gravity links (anchor is the cluster centroid — reuse first node's dir)
+      ctx.lineWidth = 1
+      // selected: center line first (under points)
+      const si = model.findIndex(m => m.n.id === (selRef.current && selRef.current.id))
+      if (si >= 0) {
+        ctx.strokeStyle = `rgba(${accent[0]},${accent[1]},${accent[2]},0.85)`
+        ctx.setLineDash([4, 4])
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(P[si][0], P[si][1]); ctx.stroke()
+        ctx.setLineDash([])
+      }
+      // points: halo pass then core pass
+      for (let i = 0; i < model.length; i++) {
+        const m = model[i], [px, py, s] = P[i]
+        const rgb = m.n.color_key === 'task_open' ? accent : (GALAXY_RGB[m.n.color_key] || [160, 170, 185])
+        const selI = i === si
+        const hovI = i === ptr.current.hov
+        const r = m.size * (1.1 + 0.6 * s) * (selI ? 1.7 : hovI ? 1.35 : 1)
+        const a = m.alpha * (selI ? 1 : hovI ? 1.2 : 1)
+        ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${(a * 0.16).toFixed(3)})`
+        ctx.beginPath(); ctx.arc(px, py, r * 3.2, 0, 6.2832); ctx.fill()
+        ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${Math.min(1, a).toFixed(3)})`
+        ctx.beginPath(); ctx.arc(px, py, r, 0, 6.2832); ctx.fill()
+        if (selI || hovI) {
+          ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.9)`
+          ctx.beginPath(); ctx.arc(px, py, r + 4 + (selI ? Math.sin(t * 4) * 1.5 : 0), 0, 6.2832); ctx.stroke()
+        }
+      }
+      // hover tooltip
+      if (ptr.current.hov >= 0) {
+        const m = model[ptr.current.hov]
+        const label = m.n.label || m.n.id
+        ctx.font = '11px ui-monospace, monospace'
+        const tw = ctx.measureText(label).width + 14
+        let tx = ptr.current.hx + 10, ty = ptr.current.hy - 8
+        if (tx + tw > W - 6) tx = ptr.current.hx - tw - 10
+        ctx.fillStyle = 'rgba(10,14,20,0.92)'
+        ctx.strokeStyle = `rgba(${accent[0]},${accent[1]},${accent[2]},0.5)`
+        ctx.beginPath(); ctx.roundRect(tx, ty - 12, tw, 20, 5); ctx.fill(); ctx.stroke()
+        ctx.fillStyle = 'rgba(230,238,246,0.95)'
+        ctx.fillText(label, tx + 7, ty + 2)
+      }
+      ptr.current.px = P // keep for hit tests
+    }
+    raf = requestAnimationFrame(render)
+    const hit = (mx, my) => {
+      const P = ptr.current.px || []
+      let best = -1, bd = 144
+      for (let i = 0; i < P.length && i < model.length; i++) {
+        const dx = P[i][0] - mx, dy = P[i][1] - my, d = dx * dx + dy * dy
+        if (d < bd) { bd = d; best = i }
+      }
+      return best
+    }
+    const onMove = (e) => {
+      const r = cv.getBoundingClientRect()
+      const mx = e.clientX - r.left, my = e.clientY - r.top
+      const p = ptr.current
+      if (p.down) {
+        cam.current.yaw += (e.clientX - p.lx) * 0.006
+        cam.current.pitch = Math.max(-1.2, Math.min(1.2, cam.current.pitch + (e.clientY - p.ly) * 0.005))
+        p.moved += Math.abs(e.clientX - p.lx) + Math.abs(e.clientY - p.ly)
+        p.lx = e.clientX; p.ly = e.clientY
+      }
+      p.hx = mx; p.hy = my
+      p.hov = p.down ? -1 : hit(mx, my)
+      cv.style.cursor = p.hov >= 0 ? 'pointer' : p.down ? 'grabbing' : 'grab'
+    }
+    const onDown = (e) => { const p = ptr.current; p.down = true; p.moved = 0; p.lx = e.clientX; p.ly = e.clientY; cv.setPointerCapture(e.pointerId) }
+    const onUp = (e) => {
+      const p = ptr.current; p.down = false
+      if (p.moved < 6) {
+        const r = cv.getBoundingClientRect()
+        const i = hit(e.clientX - r.left, e.clientY - r.top)
+        setSel(i >= 0 ? model[i].n : null)
+      }
+    }
+    const onWheel = (e) => { e.preventDefault(); cam.current.zoom = Math.max(0.55, Math.min(2.4, cam.current.zoom * (e.deltaY > 0 ? 0.92 : 1.08))) }
+    cv.addEventListener('pointermove', onMove)
+    cv.addEventListener('pointerdown', onDown)
+    cv.addEventListener('pointerup', onUp)
+    cv.addEventListener('wheel', onWheel, { passive: false })
+    return () => { stop = true; cancelAnimationFrame(raf); ro.disconnect(); cv.removeEventListener('pointermove', onMove); cv.removeEventListener('pointerdown', onDown); cv.removeEventListener('pointerup', onUp); cv.removeEventListener('wheel', onWheel) }
+  }, [model])
+  const fmtTs = (ts) => {
+    if (!ts) return ''
+    const d = new Date(ts * 1000)
+    const ago = (Date.now() - d.getTime()) / 60000
+    if (ago < 1) return 'now'; if (ago < 60) return `${Math.round(ago)}m ago`
+    if (ago < 1440) return `${Math.round(ago / 60)}h ago`
+    return `${Math.round(ago / 1440)}d ago`
+  }
+  const legend = jsx('div', { style: { position: 'absolute', left: 10, bottom: 8, display: 'flex', gap: 12, fontSize: 10, opacity: 0.75, pointerEvents: 'none' },
+    children: [
+      jsx('span', { children: '\u25CF tasks' }),
+      jsx('span', { style: { color: '#7ee787' }, children: '\u25CF cron/services' }),
+      jsx('span', { style: { color: '#f85149' }, children: '\u25CF failing' }),
+      jsx('span', { style: { color: 'var(--ui-text-tertiary)' }, children: '\u25CF done' }),
+      jsx('span', { style: { marginLeft: 'auto', opacity: 0.7 }, children: nodes.length + ' nodes \u00B7 drag \u00B7 wheel \u00B7 click' })
+    ] })
+  const detail = !sel ? null : jsx('div', { style: { position: 'absolute', right: 10, top: 8, maxWidth: '62%', fontSize: 11, padding: '7px 10px', borderRadius: 8, background: 'rgba(10,14,20,0.92)', border: '1px solid var(--ui-stroke-secondary)', pointerEvents: 'none' },
+    children: [
+      jsx('div', { style: { fontWeight: 600, marginBottom: 2 }, children: sel.label }),
+      jsx('div', { style: { opacity: 0.75 }, children: [sel.source, sel.status, sel.assignee, sel.detail, sel.ts ? fmtTs(sel.ts) : ''].filter(Boolean).join(' \u00B7 ') })
+    ] })
+  return jsx('div', { style: { position: 'relative', width: '100%', height: '100%', minHeight: 260 }, ref: wrapRef,
+    children: [
+      jsx('canvas', { ref: cvRef, 'aria-label': 'memory galaxy', style: { display: 'block', touchAction: 'none' } }),
+      legend,
+      detail
+    ] })
+}
+
 // ------------------------------------------------------------ customizable widget grid
 
 const WIDGETS = {
@@ -2874,13 +3094,14 @@ const WIDGETS = {
   status:  { title: 'Status',        span: 4,  rows: 5, render: () => jsx(StatusCard, {}) },
   metrics: { title: 'Metrics',       span: 4,  rows: 4, render: () => jsx(MetricsCard, {}) },
   quotes:  { title: 'Tickers',       span: 8,  rows: 4, render: () => jsx(QuotesCard, {}) },
+  galaxy:  { title: 'Memory galaxy', span: 8, rows: 5, render: () => jsx(AoCard, { label: 'memory galaxy', delay: 150, children: jsx(MemoryGalaxy, {}) }) },
   console: { title: 'Console',       span: 12, rows: 3, render: () => jsx(AoCard, { label: 'console', delay: 300, children: jsx(ConsoleCard, {}) }) },
   orbit:   { title: 'System orbit',  span: 12, rows: 4, render: () => jsx(OrbitCard, {}) },
   agents:  { title: 'Agent activity', span: 6, rows: 4, render: () => jsx(AgentsCard, {}) },
   releases:{ title: 'Release board',  span: 6, rows: 4, render: () => jsx(ReleasesCard, {}) }
 }
 
-const DEFAULT_ORDER = ['hero', 'advisor', 'todos', 'brief', 'status', 'metrics', 'quotes', 'agents', 'releases', 'console']
+const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'todos', 'brief', 'status', 'metrics', 'quotes', 'agents', 'releases', 'console']
 
 function defaultSizes() {
   const sizes = {}

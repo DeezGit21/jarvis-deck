@@ -2,3 +2,9 @@ npm notice run hermes-jarvis-plugin@0.1.0 npx
 npm notice run ^"vite^" preview --port 4527 --strictPort
   [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m4527[22m/[39m
 [2m  [32m➜[39m  [1mNetwork[22m[2m: use [22m[1m--host[22m[2m to expose[22m
+[2m3:11:21 AM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/plugins/agentos/connectors[39m
+Error: connect ECONNREFUSED 127.0.0.1:8785
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2214:16)
+[2m3:11:21 AM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/plugins/agentos/quotes?symbols=SPY%2CQQQ%2CNVDA%2CMSFT&crypto=BTC-USD%2CETH-USD[39m
+Error: connect ECONNREFUSED 127.0.0.1:8785
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2214:16)

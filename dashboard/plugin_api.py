@@ -1203,6 +1203,98 @@ def _kanban_activity(limit: int = 10) -> list:
     return out[:limit]
 
 
+@router.get("/memory")
+def memory_galaxy():
+    """Nodes for the memory galaxy: kanban tasks, cron jobs, monitored services.
+
+    Each node: {id, source, cluster, label, status, detail, at, ts, color_key}.
+    ts = epoch seconds (backend-normalized so the frontend stays dumb).
+    """
+    nodes: list = []
+
+    # 1. kanban tasks across all boards (recent 60 per board)
+    boards_dir = _HERMES_HOME / "kanban" / "boards"
+    if boards_dir.exists():
+        for bdir in sorted(boards_dir.iterdir()):
+            db = bdir / "kanban.db"
+            if not db.exists():
+                continue
+            try:
+                import sqlite3
+                con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+                rows = con.execute(
+                    "select id, title, status, priority, assignee,"
+                    " coalesce(completed_at, started_at, created_at)"
+                    " from tasks"
+                    " order by coalesce(completed_at, started_at, created_at) desc limit 60"
+                ).fetchall()
+                con.close()
+            except Exception:  # noqa: BLE001
+                continue
+            for tid, title, tstatus, prio, assignee, ts in rows:
+                done = (tstatus or "") in ("done", "archived")
+                nodes.append({
+                    "id": f"task:{bdir.name}:{tid}",
+                    "source": "task", "cluster": f"task:{tstatus or '?'}",
+                    "label": (title or "(untitled)")[:90],
+                    "status": tstatus or "?", "board": bdir.name,
+                    "assignee": assignee or "", "priority": prio or 0,
+                    "at": ts, "ts": _parse_ts(ts),
+                    "color_key": "task_done" if done else "task_open",
+                })
+
+    # 2. cron jobs with last-run outcome
+    try:
+        jf = _HERMES_HOME / "cron" / "jobs.json"
+        jobs = []
+        if jf.exists():
+            data = json.loads(jf.read_text(encoding="utf-8"))
+            jobs = [j for j in data.get("jobs", []) if isinstance(j, dict)]
+        db = _HERMES_HOME / "cron" / "executions.db"
+        last: dict = {}
+        if db.exists():
+            import sqlite3
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            for jid, jstatus, started, err in con.execute(
+                "select job_id, status, started_at, error from executions"
+                " where started_at is not null order by started_at desc limit 400"
+            ).fetchall():
+                if jid and jid not in last:
+                    last[jid] = (jstatus or "?", started, (err or "")[:120])
+            con.close()
+        for j in jobs:
+            jid = j.get("id", "")
+            info = last.get(jid, ("never", None, ""))
+            ok = info[0] in ("completed", "success", "succeeded")
+            nodes.append({
+                "id": f"cron:{jid}", "source": "cron", "cluster": f"cron:{info[0]}",
+                "label": (j.get("name") or jid or "?")[:90],
+                "status": info[0],
+                "detail": (str(j.get("schedule_display") or j.get("schedule") or "") )[:40],
+                "at": info[1], "ts": _parse_ts(info[1]),
+                "color_key": "cron_bad" if info[0] in ("failed", "error", "timeout") else "cron_ok",
+            })
+    except Exception as _e:  # noqa: BLE001 — surface as an error node, never silently drop
+        nodes.append({
+            "id": "cron:load-error", "source": "cron", "cluster": "cron:error",
+            "label": f"cron feed failed: {type(_e).__name__}: {_e}"[:90],
+            "status": "error", "detail": "", "at": None, "ts": None,
+            "color_key": "cron_bad",
+        })
+
+    # 3. monitored services as fixed stars
+    for svc in SERVICE_PINGS:
+        r = _ping(svc["url"])
+        nodes.append({
+            "id": f"svc:{svc['name']}", "source": "service", "cluster": "services",
+            "label": svc["name"], "status": "up" if r.get("ok") else "down",
+            "detail": f"{svc['url']}"[:60], "at": None, "ts": None,
+            "color_key": "svc_up" if r.get("ok") else "svc_down",
+        })
+
+    return {"date": _local_date(), "count": len(nodes), "nodes": nodes}
+
+
 @router.get("/agents_activity")
 def agents_activity():
     """Recent agent/cron runs + kanban task activity. Read-only, no auth beyond gateway."""
