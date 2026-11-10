@@ -1,0 +1,126 @@
+@import "tailwindcss";
+
+/* Theme vars for the Jarvis holographic control center */
+:root {
+  color-scheme: dark;
+  --ui-accent: #00f0ff;
+  --ui-accent-rgb: 0, 240, 255;
+  --ui-accent-glow: rgba(0, 240, 255, 0.35);
+  --ui-card: #090e17;
+  --ui-card-glass: rgba(9, 14, 23, 0.72);
+  --ui-stroke-primary: #1e293b;
+  --ui-stroke-secondary: rgba(0, 240, 255, 0.16);
+  --ui-text-primary: #f0f6fc;
+  --ui-text-secondary: #94a3b8;
+  --ui-text-tertiary: #64748b;
+  --ui-text-quaternary: #475569;
+  --ui-tertiary-background: #050b14;
+  --chrome-action-hover: rgba(0, 240, 255, 0.1);
+  --ui-background: #020610;
+  
+  --font-display: 'Orbitron', monospace, sans-serif;
+  --font-sub: 'Rajdhani', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+html, body, #root {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--ui-background);
+  font-family: var(--font-sub);
+  color: var(--ui-text-primary);
+  letter-spacing: 0.02em;
+}
+
+/* HUD scanlines & grid */
+.hud-scanlines {
+  background: linear-gradient(
+    rgba(18, 16, 16, 0) 50%, 
+    rgba(0, 0, 0, 0.35) 50%
+  ), linear-gradient(
+    90deg,
+    rgba(0, 240, 255, 0.02),
+    rgba(0, 240, 255, 0.01),
+    rgba(0, 240, 255, 0.02)
+  );
+  background-size: 100% 3px, 6px 100%;
+  pointer-events: none;
+}
+
+/* Subtle cyber holographic grid background */
+.hud-grid-bg {
+  background-image: 
+    radial-gradient(circle at 50% 25%, rgba(0, 240, 255, 0.07) 0%, transparent 60%),
+    linear-gradient(to right, rgba(0, 240, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 240, 255, 0.04) 1px, transparent 1px);
+  background-size: 100% 100%, 32px 32px, 32px 32px;
+}
+
+/* Chamfered corner card */
+.hud-panel {
+  position: relative;
+  background: var(--ui-card-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--ui-stroke-secondary);
+  box-shadow: 0 4px 24px -1px rgba(0, 0, 0, 0.6), 
+              0 0 15px -3px rgba(var(--ui-accent-rgb), 0.12),
+              inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hud-panel:hover {
+  border-color: rgba(var(--ui-accent-rgb), 0.38);
+  box-shadow: 0 8px 32px -1px rgba(0, 0, 0, 0.7),
+              0 0 24px -2px rgba(var(--ui-accent-rgb), 0.22),
+              inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+/* Tactical Corner Brackets */
+.hud-brackets::before,
+.hud-brackets::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  pointer-events: none;
+  border-color: var(--ui-accent);
+  opacity: 0.75;
+  transition: opacity 0.2s ease, width 0.2s ease, height 0.2s ease;
+}
+
+.hud-brackets::before {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid;
+  border-left: 2px solid;
+}
+
+.hud-brackets::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 2px solid;
+  border-right: 2px solid;
+}
+
+.hud-panel:hover .hud-brackets::before,
+.hud-panel:hover .hud-brackets::after {
+  opacity: 1;
+  width: 12px;
+  height: 12px;
+}
+
+/* Glowing Neon Text and Elements */
+.glow-text-cyan {
+  text-shadow: 0 0 12px rgba(0, 240, 255, 0.65), 0 0 24px rgba(0, 240, 255, 0.3);
+}
+
+.glow-border-cyan {
+  box-shadow: 0 0 16px rgba(0, 240, 255, 0.35);
+}
+
+/* Font helpers */
+.font-orbitron { font-family: var(--font-display); }
+.font-rajdhani { font-family: var(--font-sub); }
+.font-mono-tech { font-family: var(--font-mono); }
+
