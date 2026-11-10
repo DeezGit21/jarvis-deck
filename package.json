@@ -1,9 +1,9 @@
 {
-  "name": "hermes-jarvis-plugin",
+  "name": "jarvis-deck",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "AgentOS — Jarvis control-center plugin for Hermes (standalone UI preview)",
+  "description": "JARVIS Deck \u2014 open-source standalone control deck for your personal agent: neural plasma orb, memory galaxy, voice console.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

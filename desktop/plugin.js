@@ -1,12 +1,8 @@
 /**
- * agentos — OS Dashboard desktop plugin (v2: Jarvis control-center edition).
- * Full page at /agentos + sidebar nav. Data from the agentos plugin backend
- * (AppData/Local/hermes/plugins/agentos/dashboard/plugin_api.py), mounted at
- * /api/plugins/agentos when 'agentos' is in plugins.enabled in config.yaml.
- *
- * v2 shell: modular customizable widget grid, WebGL raymarched 3D Jarvis orb
- * (replaces the ASCII orb), Spotlight command runner (Ctrl/Cmd+J) with an
- * optional pinned command dock. All data cards and endpoints unchanged.
+ * jarvis-deck — standalone JARVIS-style control deck for your agent.
+ * Data from the FastAPI backend (dashboard/plugin_api.py), mounted at
+ * /api/plugins/agentos (standalone runner: dashboard/standalone.py).
+ * Point it at any agent backend by editing agentos.yaml (see README).
  */
 import {
   ROUTES_AREA,
@@ -1925,6 +1921,31 @@ function ConsoleCard({ compact = false }) {
     rec.start()
   }
 
+  // Hold-spacebar push-to-talk: press Space anywhere (outside a text field)
+  // to start listening, release to stop + send. Reuses startVoice's flow —
+  // rec.onend sends the final transcript.
+  const listeningRef = useRef(false)
+  listeningRef.current = listening
+  const startVoiceRef = useRef(null)
+  startVoiceRef.current = startVoice
+  useEffect(() => {
+    if (!micOk) return
+    const isTyping = t => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+    const onKey = e => {
+      if (e.code !== 'Space' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
+      if (isTyping(e.target)) return
+      e.preventDefault()
+      if (!listeningRef.current) startVoiceRef.current()
+    }
+    const onKeyUp = e => {
+      if (e.code !== 'Space' || isTyping(e.target)) return
+      if (listeningRef.current && recRef.current) { try { recRef.current.stop() } catch { /* ignore */ } }
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('keyup', onKeyUp)
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp) }
+  }, [micOk])
+
   return jsxs('div', { className: 'flex flex-col gap-2', children: [
     msgs.length > 0 && jsx('div', {
       ref: scrollRef,
@@ -1964,14 +1985,14 @@ function ConsoleCard({ compact = false }) {
           (listening
             ? 'border-[#f85149] text-[#f85149] hover:bg-[#f8514911]'
             : 'border-(--ui-stroke-secondary) text-(--ui-text-secondary) hover:border-(--ui-accent) hover:text-(--ui-accent)'),
-        title: listening ? 'Listening…' : 'Voice command',
+        title: listening ? 'Listening…' : 'Voice command (or hold SPACE — push to talk)',
         children: jsx('span', { className: 'text-sm', children: listening ? '■' : '●' })
       }),
       jsx('input', {
         value: input,
         onChange: e => setInput(e.target.value),
         onKeyDown: e => { if (e.key === 'Enter') send() },
-        placeholder: micOk ? 'Ask JARVIS — type or speak…' : 'Ask JARVIS — type, or dictate with Typeless…',
+        placeholder: micOk ? 'Ask JARVIS — type, click ●, or hold SPACE…' : 'Ask JARVIS — type, or dictate with Typeless…',
         className: 'min-w-0 flex-1 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) px-3 py-2 text-sm text-(--ui-text-primary) outline-none transition-colors placeholder:text-(--ui-text-tertiary) focus:border-(--ui-accent)'
       }),
       jsx('button', {
@@ -3336,11 +3357,11 @@ function AgentosPage() {
           jsxs('div', { children: [
             jsx('div', {
               className: 'ao-wordmark text-base font-semibold text-(--ui-accent) ao-hero-glow',
-              children: 'AGENTOS // JARVIS HUD'
+              children: 'JARVIS DECK // OPS CONTROL'
             }),
             jsx('div', {
               className: 'mt-0.5 font-mono text-[0.6rem] uppercase tracking-[0.22em] text-(--ui-text-quaternary)',
-              children: 'neural interface · operations control'
+              children: 'neural interface · personal ops deck'
             })
           ] }),
           jsx('button', {

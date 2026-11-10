@@ -28,6 +28,8 @@ GOALS_FILE = AGENTOS / "goals.md"
 APPS_FILE = AGENTOS / "apps.yaml"
 ENV_FILE = AGENTOS / ".env"
 MONEY_VENV_PY = AGENTOS / "venv" / "Scripts" / "python.exe"
+if not MONEY_VENV_PY.exists():
+    MONEY_VENV_PY = AGENTOS / "venv" / "bin" / "python"
 
 AGENTOS_YAML = AGENTOS / "agentos.yaml"
 
@@ -697,14 +699,16 @@ def advisor_action(body: dict = Body(...)):
 
 # ---------------------------------------------------------------- tools (orbit ring)
 
-CONFIG_FILE = HOME / "AppData" / "Local" / "hermes" / "config.yaml"
+def _config_file() -> Path:
+    """Hermes config.yaml under whichever home owns the data (desktop app or CLI)."""
+    return _hermes_home() / "config.yaml"
 
 
 @router.get("/tools")
 def tools():
     """Enabled plugins + MCP servers from config.yaml — feeds the orbit ring."""
     try:
-        cfg = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+        cfg = yaml.safe_load(_config_file().read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError):
         cfg = {}
     plugins: list[str] = []
@@ -828,7 +832,7 @@ def connectors():
     """Hosted connector accounts + local MCP servers, with click-through URLs."""
     mcps = []
     try:
-        cfg = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+        cfg = yaml.safe_load(_config_file().read_text(encoding="utf-8")) or {}
         srv = cfg.get("mcp_servers")
         if isinstance(srv, dict):
             for name, val in srv.items():
@@ -1109,12 +1113,12 @@ def _hermes_home() -> Path:
 
 
 _HERMES_HOME = _hermes_home()
+# Watched repos for the release board: from agentos.yaml `release_repos`
+# (list of {label, repo}), so a public checkout carries no personal topology.
 _RELEASE_REPOS = [
-    ("WirePro", "DeezGit21/hvac-wirepro"),
-    ("TriQuote", "DeezGit21/triquote"),
-    ("AC DR's App", "DeezGit21/AC-DRs-App"),
-    ("Arctic Hub", "DeezGit21/arctic-hub"),
-    ("Dynamic Intake", "DeezGit21/hvac-dynamic-intake"),
+    (str(r.get("label") or r["repo"]), str(r["repo"]))
+    for r in (_CFG.get("release_repos") or [])
+    if isinstance(r, dict) and r.get("repo")
 ]
 _REL_CACHE = {"at": 0.0, "data": None}
 
@@ -1161,7 +1165,8 @@ def _parse_ts(v):
     if v is None:
         return None
     try:
-        return float(v) / 1000.0 if float(v) > 1e11 else float(v) / 1000.0
+        f = float(v)
+        return f / 1000.0 if f > 1e11 else f  # epoch-ms vs epoch-s
     except (TypeError, ValueError):
         pass
     try:

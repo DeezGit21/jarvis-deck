@@ -101,7 +101,7 @@ export async function mockRest(path, opts = {}) {
         } else if (q.includes('status') || q.includes('services')) {
           reply = "Hub CRM, Payments API, and Booking are healthy. Rapid Dial AI is offline on port 8000; I recommend scheduling a reboot."
         } else if (q.includes('who are you') || q.includes('jarvis')) {
-          reply = "JARVIS online — AgentOS neural core interface running."
+          reply = "JARVIS online — deck neural core running."
         } else if (q.includes('money') || q.includes('revenue') || q.includes('stripe')) {
           reply = "Revenue month-to-date is $18,450 across 11 completed jobs. Stripe has $1,240.55 available for immediate payout."
         } else {
