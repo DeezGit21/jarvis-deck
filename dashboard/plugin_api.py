@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import csv
 import datetime as _dt
+import difflib
 import json
 import os
+import re
+import sqlite3
 import subprocess
 import time
 import urllib.parse
@@ -233,46 +236,125 @@ def status():
 
 
 # ---------------------------------------------------------------- todos
+# The personal todo list lives on the dedicated kanban board `personal`
+# (durable, shared: the telegram bot's standing rule in SOUL.md points it
+# here, and the JARVIS deck reads/writes the same board via sqlite — no
+# dependency on the CLI's *current* board). The telegram todo_list bridge
+# stays as a fallback for items the bot stored in session state instead;
+# those are fuzzy-deduped against board titles so nothing shows twice.
+
+PERSONAL_BOARD = str(_CFG.get("personal_board") or "personal")
+_OPEN_STATUSES = {"todo", "ready", "blocked", "review", "scheduled"}
+
+
+def _norm_title(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+def _titles_similar(a: str, b: str) -> bool:
+    na, nb = _norm_title(a), _norm_title(b)
+    if not na or not nb:
+        return False
+    if na == nb or na in nb or nb in na:
+        return True
+    return difflib.SequenceMatcher(None, na, nb).ratio() >= 0.72
+
+
+def _personal_board_tasks() -> list[dict]:
+    """All tasks on the personal board, read straight from its sqlite DB."""
+    db = _HERMES_HOME / "kanban" / "boards" / PERSONAL_BOARD / "kanban.db"
+    if not db.exists():
+        return []
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        rows = con.execute(
+            "select id, title, status, priority, assignee,"
+            " coalesce(completed_at, started_at, created_at)"
+            " from tasks order by created_at desc limit 200"
+        ).fetchall()
+        con.close()
+    except sqlite3.Error:
+        return []
+    return [
+        {"id": tid, "title": (title or "")[:140], "status": status or "todo",
+         "priority": prio or 0, "assignee": assignee or "", "source": "kanban", "at": ts}
+        for tid, title, status, prio, assignee, ts in rows
+    ]
+
+
+def _tg_notify(text: str) -> bool:
+    """Fire-and-forget push to the telegram home channel via `hermes send`."""
+    if not _CFG.get("telegram_notify", True):
+        return False
+    rc, _, _ = _sh(["hermes", "send", "--to", "telegram", text], timeout=45)
+    return rc == 0
 
 
 @router.get("/todos")
 def todos():
-    rc, out, err = _sh(["hermes", "kanban", "list", "--json"], timeout=40)
-    if rc != 0:
-        raise HTTPException(status_code=502, detail=f"kanban list failed: {err.strip()[:300]}")
-    try:
-        tasks = json.loads(out)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=502, detail="kanban list returned non-JSON") from None
-    keep = {"todo", "ready", "blocked", "review", "scheduled"}
-    rows = [
-        {"id": t.get("id"), "title": t.get("title", "")[:140], "status": t.get("status"),
-         "priority": t.get("priority", 0), "assignee": t.get("assignee", "")}
-        for t in tasks if t.get("status") in keep
-    ]
-    # personal todos from the telegram todo_list store (not kanban — merged in)
-    stodos = _session_todos()
-    have = {r["id"] for r in rows}
-    rows.extend(t for t in stodos if t["id"] not in have)
-    rows.sort(key=lambda t: (-t["priority"], t["status"]))
-    return {"tasks": rows, "total_open": len(rows)}
+    board = _personal_board_tasks()
+    rows = [t for t in board if t["status"] in _OPEN_STATUSES]
+    # telegram session-store bridge — only items with no board twin survive
+    for t in _session_todos():
+        if not any(_titles_similar(t["title"], bt["title"]) for bt in board):
+            rows.append(t)
+    rows.sort(key=lambda t: (-t.get("priority", 0), t.get("status", "")))
+    return {"tasks": rows, "total_open": len(rows), "board": PERSONAL_BOARD}
 
 
 @router.post("/todos/create")
 def todos_create(body: dict = Body(...)):
-    """Create a kanban task (no assignee — stays visible on the board)."""
+    """Create a task on the personal board (no assignee — stays on the board)."""
     title = str(body.get("title") or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="title is required")
     title = title[:200]
-    rc, out, err = _sh(["hermes", "kanban", "create", title, "--json"], timeout=40)
+    rc, out, err = _sh(
+        ["hermes", "kanban", "--board", PERSONAL_BOARD, "create", title, "--json"], timeout=40)
     if rc != 0:
         raise HTTPException(status_code=502, detail=f"kanban create failed: {err.strip()[:300]}")
     try:
         task = json.loads(out)
     except json.JSONDecodeError:
         raise HTTPException(status_code=502, detail="kanban create returned non-JSON") from None
-    return {"ok": True, "id": task.get("id"), "status": task.get("status"), "title": title}
+    sent = _tg_notify(f"📝 Added to your list (deck): {title}")
+    return {"ok": True, "id": task.get("id"), "status": task.get("status"),
+            "title": title, "notified": sent}
+
+
+@router.post("/todos/complete")
+def todos_complete(body: dict = Body(...)):
+    """Complete a personal todo.
+
+    Board task -> `hermes kanban complete`. Telegram-bridge item (session
+    todo_list store, no durable write path) -> record it as a completed
+    task on the board so the completion is durable and visible everywhere.
+    """
+    tid = str(body.get("id") or "").strip()
+    title = str(body.get("title") or "").strip()
+    if not tid:
+        raise HTTPException(status_code=400, detail="id is required")
+    if tid.startswith("tg:"):
+        if not title:
+            raise HTTPException(status_code=400, detail="title required for telegram items")
+        rc, out, err = _sh(
+            ["hermes", "kanban", "--board", PERSONAL_BOARD, "create", title[:200], "--json"],
+            timeout=40)
+        if rc != 0:
+            raise HTTPException(status_code=502, detail=f"kanban create failed: {err.strip()[:300]}")
+        try:
+            tid = json.loads(out).get("id") or ""
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=502, detail="kanban create returned non-JSON") from None
+        if not tid:
+            raise HTTPException(status_code=502, detail="kanban create returned no id")
+    rc, out, err = _sh(
+        ["hermes", "kanban", "--board", PERSONAL_BOARD, "complete", tid,
+         "--result", "completed from JARVIS deck"], timeout=40)
+    if rc != 0:
+        raise HTTPException(status_code=502, detail=f"kanban complete failed: {err.strip()[:300]}")
+    sent = _tg_notify(f"✅ Completed (deck): {title or tid}")
+    return {"ok": True, "id": tid, "notified": sent}
 
 
 # ---------------------------------------------------------------- goals
@@ -1300,9 +1382,14 @@ def memory_galaxy():
                     "color_key": "task_done" if done else "task_open",
                 })
 
-    # 1b. personal todos from the telegram todo_list store — glow cyan
+    # 1b. personal todos from the telegram todo_list store — glow cyan.
+    # Skip items that already exist as kanban tasks (same title) so the
+    # migrated personal board doesn't double-render in the galaxy.
     try:
+        _kanban_titles = [n["label"] for n in nodes if n.get("source") == "task"]
         for t in _session_todos():
+            if any(_titles_similar(t["title"], kt) for kt in _kanban_titles):
+                continue
             nodes.append({
                 "id": t["id"], "source": "task", "cluster": "task:todo",
                 "label": t["title"], "status": t["status"],
