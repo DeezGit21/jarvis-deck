@@ -250,6 +250,10 @@ def todos():
          "priority": t.get("priority", 0), "assignee": t.get("assignee", "")}
         for t in tasks if t.get("status") in keep
     ]
+    # personal todos from the telegram todo_list store (not kanban — merged in)
+    stodos = _session_todos()
+    have = {r["id"] for r in rows}
+    rows.extend(t for t in stodos if t["id"] not in have)
     rows.sort(key=lambda t: (-t["priority"], t["status"]))
     return {"tasks": rows, "total_open": len(rows)}
 
@@ -1176,6 +1180,54 @@ def _parse_ts(v):
         return None
 
 
+def _session_todos() -> list[dict]:
+    """Latest Hermes todo_list snapshot from the gateway session store.
+
+    Hermes todo_list state lives in session transcripts (state.db messages),
+    not a durable file — the most recent snapshot from a telegram session is
+    the live personal list. Returns [{id, title, status}] with kanban-style
+    statuses (pending -> todo, in_progress -> ready).
+    """
+    try:
+        import sqlite3
+        db = _hermes_home() / "state.db"
+        if not db.exists():
+            return []
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        rows = con.execute(
+            "select m.content, m.timestamp from messages m"
+            " join sessions s on s.id = m.session_id"
+            " where s.source = 'telegram' and m.content like '%'||char(34)||'todos'||char(34)||'%'"
+            " order by m.timestamp desc limit 25"
+        ).fetchall()
+        con.close()
+        for content, ts in rows:
+            try:
+                d = json.loads(content)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            todos = d.get("todos")
+            if isinstance(todos, list) and "revision" in d:
+                out = []
+                for t in todos:
+                    if not isinstance(t, dict):
+                        continue
+                    st = str(t.get("status") or "pending")
+                    if st in ("completed", "cancelled"):
+                        continue
+                    out.append({
+                        "id": f"tg:{t.get('id') or t.get('content', '')[:20]}",
+                        "title": str(t.get("content") or "")[:160],
+                        "status": "todo" if st == "pending" else "ready",
+                        "priority": 0, "assignee": "telegram",
+                        "at": ts, "ts": ts,
+                    })
+                return out
+        return []
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _kanban_activity(limit: int = 10) -> list:
     """Most recent task activity across all kanban boards."""
     import sqlite3
@@ -1247,6 +1299,18 @@ def memory_galaxy():
                     "at": ts, "ts": _parse_ts(ts),
                     "color_key": "task_done" if done else "task_open",
                 })
+
+    # 1b. personal todos from the telegram todo_list store — glow cyan
+    try:
+        for t in _session_todos():
+            nodes.append({
+                "id": t["id"], "source": "task", "cluster": "task:todo",
+                "label": t["title"], "status": t["status"],
+                "board": "telegram", "assignee": "telegram", "priority": 0,
+                "at": t.get("at"), "ts": t.get("ts"), "color_key": "task_open",
+            })
+    except Exception:  # noqa: BLE001
+        pass
 
     # 2. cron jobs with last-run outcome
     try:
