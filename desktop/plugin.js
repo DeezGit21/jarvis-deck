@@ -650,17 +650,87 @@ const JarvisCtl = {
   canVoice: false
 }
 
-// ------------------------------------------------------------ 3D Jarvis orb
-// Raw-WebGL raymarched glowing sphere (the plugin SDK cannot resolve bare
-// specifiers, so this is hand-rolled WebGL instead of Three.js — same visual
-// result: SDF sphere, fbm-displaced surface, fresnel rim, volumetric halo).
-// Perf budget: dpr capped at 1.25, render scale 0.8, 48 fixed steps, noise
-// only evaluated inside the surface band, frame paused when offscreen.
+// ------------------------------------------------------------ NeuralCore orb
+// jarvis-deck orb v2: plasma core + neural network combo.
+//   Layer 1 — plasma core: single quad, fragment shader fakes a 3D sphere
+//             (sphere-surface normal from the pixel), fbm convection bands
+//             drifting across it, white-hot center, fresnel rim burn, corona.
+//   Layer 2 — neural net: fibonacci-sphere neuron shell + always-on edges
+//             with signal pulses traveling along them; density and pulse
+//             speed driven by the assistant state (speaking = fully lit
+//             fast network, idle = dim slow web).
+// Raw-WebGL, hand-rolled (plugin SDK heritage — no three.js at runtime).
+// Perf budget: dpr capped 1.25, render scale 0.8, frame paused offscreen.
 
-// Particle-sphere core: fibonacci-distributed points + tilted filament rings,
-// wave-displaced and rim-brightened (the reference look — a constructed
-// particle mesh, not a smooth blob).
-const ORB3D_VERT = `precision highp float;
+const NC_CORE_VERT = `precision highp float;
+attribute vec2 position;
+varying vec2 vUv;
+void main() {
+  vUv = position * 0.5 + 0.5;
+  gl_Position = vec4(position, 0.0, 1.0);
+}`
+
+const NC_CORE_FRAG = `precision highp float;
+uniform float iTime;
+uniform float uEnergy;
+uniform float uLevel;
+uniform vec3 uCol1;
+varying vec2 vUv;
+float hash(vec3 p) {
+  return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+}
+float vnoise(vec3 x) {
+  vec3 i = floor(x);
+  vec3 f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  float n000 = hash(i);
+  float n100 = hash(i + vec3(1.0, 0.0, 0.0));
+  float n010 = hash(i + vec3(0.0, 1.0, 0.0));
+  float n110 = hash(i + vec3(1.0, 1.0, 0.0));
+  float n001 = hash(i + vec3(0.0, 0.0, 1.0));
+  float n101 = hash(i + vec3(1.0, 0.0, 1.0));
+  float n011 = hash(i + vec3(0.0, 1.0, 1.0));
+  float n111 = hash(i + vec3(1.0, 1.0, 1.0));
+  return mix(mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
+             mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
+}
+float fbm(vec3 p) {
+  float v = 0.0;
+  float a = 0.5;
+  for (int k = 0; k < 4; k++) {
+    v += a * vnoise(p);
+    p = p * 2.05 + vec3(1.7);
+    a *= 0.55;
+  }
+  return v;
+}
+void main() {
+  vec2 uv = (vUv - 0.5) * 2.0;
+  float r = length(uv);
+  float R = 0.52;
+  if (r > R * 1.45) { gl_FragColor = vec4(0.0); return; }
+  float t = iTime;
+  // fake-3D: sphere surface point + normal from the pixel position
+  float z = sqrt(max(R * R - r * r, 0.0));
+  vec3 n = normalize(vec3(uv, z));
+  // convection: turbulence bands drift across the surface
+  float turb = fbm(n * 2.3 + vec3(0.0, t * 0.38, t * 0.24));
+  float cells = fbm(n * 4.6 + vec3(turb * 1.6 - t * 0.55, t * 0.2, 0.0));
+  float heat = 0.42 + 0.38 * uEnergy + 0.3 * uLevel + 0.14 * sin(t * 2.1 + turb * 7.0);
+  float limb = smoothstep(R * 1.05, R * 0.3, r);
+  float rim = pow(smoothstep(R * 0.7, R * 1.02, r), 2.0) * (0.7 + 0.7 * uEnergy);
+  float centerGlow = pow(max(1.0 - r / R, 0.0), 3.0);
+  vec3 col = mix(uCol1 * 0.1, uCol1, clamp(pow(cells, 1.6) * 2.1, 0.0, 1.0));
+  col = mix(col, vec3(1.0), clamp(heat * 0.42 + centerGlow * 0.8, 0.0, 1.0));
+  col += uCol1 * rim * 0.9;
+  float halo = exp(-max(r - R, 0.0) * 9.0) * (0.22 + 0.3 * uEnergy);
+  float a = limb * (0.5 + 0.5 * heat) * (0.45 + 0.55 * cells) + halo;
+  gl_FragColor = vec4(col * a, a);
+}`
+
+// Neuron shell points: wave-displaced fibonacci sphere + filament rings +
+// radial energy streams (proven layer, carried over from the v1 orb).
+const NC_VERT = `precision highp float;
 attribute vec3 position;
 attribute float seed;
 uniform float iTime;
@@ -673,37 +743,33 @@ varying float vSeed;
 varying float vHot;
 void main() {
   float t = iTime;
-  // organic wave displacement over the sphere direction
   float w = sin(position.y * 3.1 + t * 0.6 + seed * 6.283) * 0.5
           + sin(position.x * 4.2 - t * 0.45 + seed * 3.1) * 0.3
           + sin(position.z * 2.4 + t * 0.3) * 0.4;
   float amp = 0.05 + 0.09 * uEnergy + 0.14 * uLevel;
   vec3 p = position * (1.0 + w * amp) * (1.0 + 0.22 * uPlex);
-  // slow spin around Y with a fixed aesthetic tilt
   float a = t * 0.12 + 0.6;
   float ca = cos(a), sa = sin(a);
   p = vec3(p.x * ca + p.z * sa, p.y, -p.x * sa + p.z * ca);
   float tilt = 0.0;
   float ct = cos(tilt), stl = sin(tilt);
   p = vec3(p.x, p.y * ct - p.z * stl, p.y * stl + p.z * ct);
-  // perspective from a camera parked at z = -2.7 looking down +z
   float zv = p.z + 2.7;
   float aspect = iRes.x / max(iRes.y, 1.0);
   vec2 ndc = vec2(p.x * 1.55 / (zv * aspect), p.y * 1.55 / zv);
   gl_Position = vec4(ndc, 0.0, 1.0);
-  // silhouette points glow brighter; camera-facing points burn hot (plasma core)
   float rim = pow(1.0 - abs(p.z) / max(length(p), 0.001), 1.5);
   float hot = pow(max(p.z / max(length(p), 0.001), 0.0), 2.0);
   float near = clamp((zv - 1.4) / 2.6, 0.0, 1.0);
-  vBright = (0.34 + 0.6 * seed * seed) * (0.7 + 0.6 * uEnergy + 0.8 * uLevel)
+  vBright = (0.1 + 1.15 * seed * seed) * (0.7 + 0.6 * uEnergy + 0.8 * uLevel)
           * (0.6 + 0.4 * near) * (1.0 + 0.7 * rim) * (0.85 + 0.55 * hot)
-          * (1.0 - 0.65 * uPlex);  // points recede as the plexus emerges
+          * (1.0 - 0.5 * uPlex);
   vSeed = seed;
   vHot = hot;
-  gl_PointSize = (1.9 + 2.7 * seed + 1.3 * uEnergy + 1.6 * uLevel) * (iRes.y / 700.0);
+  gl_PointSize = (1.5 + 3.4 * seed + 1.3 * uEnergy + 1.6 * uLevel) * (iRes.y / 700.0);
 }`
 
-const ORB3D_FRAG = `precision highp float;
+const NC_FRAG = `precision highp float;
 uniform vec3 uCol1;
 uniform vec3 uCol2;
 varying float vBright;
@@ -715,21 +781,25 @@ void main() {
   if (d > 0.5) discard;
   float a = smoothstep(0.5, 0.08, d);
   vec3 col = mix(uCol2, uCol1, clamp(vSeed * 1.4, 0.0, 1.0));
-  col = mix(col, vec3(1.0), vHot * 0.55);  // white-hot plasma center
+  col = mix(col, vec3(1.0), vHot * 0.55);
   float b = vBright * a;
-  gl_FragColor = vec4(col * b, b);  // premultiplied additive glow
+  gl_FragColor = vec4(col * b, b);
 }`
 
-// Plexus line layer: while JARVIS speaks the structure unravels into a neural
-// network (reference behavior) — nearby points connect with glowing filaments.
-const ORB3D_LINE_VERT = `precision highp float;
+// Neural edges: nearby neurons connect with filaments; signal pulses travel
+// along each edge (per-edge phase offset), heating to white at the head.
+const NC_LINE_VERT = `precision highp float;
 attribute vec3 position;
 attribute float seed;
+attribute float t01;
+attribute float phase;
 uniform float iTime;
 uniform vec2 iRes;
 uniform float uEnergy;
 uniform highp float uPlex;
 varying float vSeed;
+varying float vT01;
+varying float vPhase;
 void main() {
   float t = iTime;
   float w = sin(position.y * 3.1 + t * 0.6 + seed * 6.283) * 0.5
@@ -746,14 +816,25 @@ void main() {
   float aspect = iRes.x / max(iRes.y, 1.0);
   gl_Position = vec4(p.x * 1.55 / (zv * aspect), p.y * 1.55 / zv, 0.0, 1.0);
   vSeed = seed;
+  vT01 = t01;
+  vPhase = phase;
 }`
-const ORB3D_LINE_FRAG = `precision highp float;
+const NC_LINE_FRAG = `precision highp float;
+uniform float iTime;
 uniform vec3 uCol1;
+uniform float uEnergy;
+uniform float uLevel;
 uniform highp float uPlex;
 varying float vSeed;
+varying float vT01;
+varying float vPhase;
 void main() {
-  float b = (0.35 + 0.65 * vSeed) * uPlex;
-  vec3 col = mix(uCol1, vec3(1.0), 0.35);  // bright white-cyan filaments
+  float speed = 0.22 + 0.85 * uEnergy;
+  float sp = fract(vT01 - iTime * speed + vPhase);
+  float head = sp < 0.18 ? (1.0 - sp / 0.18) : 0.0;
+  head = head * head;
+  float b = (0.24 + 0.52 * vSeed) * uPlex + head * (0.6 + 0.7 * uLevel + 0.4 * uEnergy);
+  vec3 col = mix(uCol1, vec3(1.0), 0.25 + 0.55 * head);
   gl_FragColor = vec4(col * b, b);
 }`
 
@@ -772,6 +853,7 @@ function cssColorToRgb(v) {
   return null
 }
 
+// Orb3D is the public name (hero/HUD reference it); it renders NeuralCore.
 function Orb3D({ size = 220, onClick, ariaLabel }) {
   const rootRef = useRef(null)
   const cvRef = useRef(null)
@@ -793,32 +875,53 @@ function Orb3D({ size = 220, onClick, ariaLabel }) {
     let gl = null
     try {
       gl = cv.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false })
-    } catch (e) { console.warn('[agentos] orb: webgl getContext threw', e) }
+    } catch (e) { console.warn('[jarvis-deck] orb: webgl getContext threw', e) }
     if (!gl) return undefined // CSS fallback layer below still renders a glowing orb
     function sh(type, src) {
       const s = gl.createShader(type)
       gl.shaderSource(s, src)
       gl.compileShader(s)
       if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-        console.warn('[agentos] orb: shader compile failed:', gl.getShaderInfoLog(s))
+        console.warn('[jarvis-deck] orb: shader compile failed:', gl.getShaderInfoLog(s))
         gl.deleteShader(s)
         return null
       }
       return s
     }
-    const vs = sh(gl.VERTEX_SHADER, ORB3D_VERT)
-    const fs = sh(gl.FRAGMENT_SHADER, ORB3D_FRAG)
-    if (!vs || !fs) return undefined
-    const prog = gl.createProgram()
-    gl.attachShader(prog, vs)
-    gl.attachShader(prog, fs)
-    gl.linkProgram(prog)
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      console.warn('[agentos] orb: program link failed:', gl.getProgramInfoLog(prog))
-      return undefined
+    function link(vs, fs, tag) {
+      const p = gl.createProgram()
+      gl.attachShader(p, vs)
+      gl.attachShader(p, fs)
+      gl.linkProgram(p)
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+        console.warn('[jarvis-deck] orb:', tag, 'link failed:', gl.getProgramInfoLog(p))
+        return null
+      }
+      return p
     }
-    gl.useProgram(prog)
-    // Geometry: fibonacci sphere of points + three tilted filament rings.
+
+    // --- plasma core quad program
+    const coreVs = sh(gl.VERTEX_SHADER, NC_CORE_VERT)
+    const coreFs = sh(gl.FRAGMENT_SHADER, NC_CORE_FRAG)
+    const coreProg = coreVs && coreFs ? link(coreVs, coreFs, 'core') : null
+    const UC = coreProg ? {} : null
+    if (UC) for (const n of ['iTime', 'uEnergy', 'uLevel', 'uCol1']) UC[n] = gl.getUniformLocation(coreProg, n)
+    const quadBuf = gl.createBuffer()
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf)
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW)
+    const coreLocPos = coreProg ? gl.getAttribLocation(coreProg, 'position') : -1
+    const bindCoreAttrs = () => {
+      gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf)
+      gl.enableVertexAttribArray(coreLocPos)
+      gl.vertexAttribPointer(coreLocPos, 2, gl.FLOAT, false, 8, 0)
+    }
+
+    // --- neuron shell point program + geometry
+    const vs = sh(gl.VERTEX_SHADER, NC_VERT)
+    const fs = sh(gl.FRAGMENT_SHADER, NC_FRAG)
+    if (!vs || !fs) return undefined
+    const prog = link(vs, fs, 'points')
+    if (!prog) return undefined
     const verts = (() => {
       const pts = []
       const N = 4800
@@ -840,9 +943,7 @@ function Orb3D({ size = 220, onClick, ariaLabel }) {
           pts.push(x, y1, z1, Math.random())
         }
       }
-      // Radial filaments: thin streams of particles bursting outward from the
-      // core (the reference look — energy held together, not a rigid shell).
-      // fibonacci-distributed in antipodal pairs — the burst stays centered
+      // radial energy streams in antipodal pairs — burst stays centered
       for (let f = 0; f < 13; f++) {
         const yf = 1 - (f / 12) * 2
         const rf = Math.sqrt(Math.max(0, 1 - yf * yf))
@@ -868,62 +969,65 @@ function Orb3D({ size = 220, onClick, ariaLabel }) {
     const locSeed = gl.getAttribLocation(prog, 'seed')
     gl.enableVertexAttribArray(locSeed)
     gl.vertexAttribPointer(locSeed, 1, gl.FLOAT, false, stride, 12)
-    gl.enable(gl.BLEND)
-    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
     const U = {}
     for (const n of ['iTime', 'iRes', 'uCol1', 'uCol2', 'uLevel', 'uEnergy', 'uPlex']) U[n] = gl.getUniformLocation(prog, n)
 
-    // Plexus line program + geometry (pairs of nearby points, same attributes).
+    // --- neural edge program + geometry (per-vertex: xyz, seed, t01, phase)
     let lineProg = null, UL = null, lineBuf = null, lineCount = 0
-    const lvs = sh(gl.VERTEX_SHADER, ORB3D_LINE_VERT)
-    const lfs = sh(gl.FRAGMENT_SHADER, ORB3D_LINE_FRAG)
-    if (!lvs || !lfs) console.warn('[agentos] orb: plexus line shader compile failed')
+    const lvs = sh(gl.VERTEX_SHADER, NC_LINE_VERT)
+    const lfs = sh(gl.FRAGMENT_SHADER, NC_LINE_FRAG)
+    if (!lvs || !lfs) console.warn('[jarvis-deck] orb: edge shader compile failed')
     if (lvs && lfs) {
-      const lp = gl.createProgram()
-      gl.attachShader(lp, lvs)
-      gl.attachShader(lp, lfs)
-      gl.linkProgram(lp)
-      if (gl.getProgramParameter(lp, gl.LINK_STATUS)) {
-        lineProg = lp
+      lineProg = link(lvs, lfs, 'edges')
+      if (lineProg) {
         UL = {}
-        for (const n of ['iTime', 'iRes', 'uCol1', 'uEnergy', 'uPlex']) UL[n] = gl.getUniformLocation(lp, n)
+        for (const n of ['iTime', 'iRes', 'uCol1', 'uEnergy', 'uLevel', 'uPlex']) UL[n] = gl.getUniformLocation(lineProg, n)
         const segs = []
         let tries = 0
-        while (segs.length < 700 * 8 && tries < 90000) {
+        const strideL = 6
+        while (segs.length < 700 * strideL * 2 && tries < 90000) {
           tries++
           const i = (Math.random() * 4800 | 0) * 4
           const j = (Math.random() * 4800 | 0) * 4
           const dx = verts[i] - verts[j], dy = verts[i + 1] - verts[j + 1], dz = verts[i + 2] - verts[j + 2]
           if (dx * dx + dy * dy + dz * dz > 0.3) continue
-          segs.push(verts[i], verts[i + 1], verts[i + 2], verts[i + 3],
-            verts[j], verts[j + 1], verts[j + 2], verts[j + 3])
+          const ph = Math.random() * 6.283
+          segs.push(verts[i], verts[i + 1], verts[i + 2], verts[i + 3], 0, ph,
+            verts[j], verts[j + 1], verts[j + 2], verts[j + 3], 1, ph)
         }
         const lineVerts = new Float32Array(segs)
-        lineCount = lineVerts.length / 4
+        lineCount = lineVerts.length / strideL
         lineBuf = gl.createBuffer()
         gl.bindBuffer(gl.ARRAY_BUFFER, lineBuf)
         gl.bufferData(gl.ARRAY_BUFFER, lineVerts, gl.STATIC_DRAW)
-      } else {
-        console.warn('[agentos] orb: plexus line program failed to link:', gl.getProgramInfoLog(lp))
       }
+    }
+    const bindLineAttrs = () => {
+      gl.bindBuffer(gl.ARRAY_BUFFER, lineBuf)
+      const la = gl.getAttribLocation(lineProg, 'position')
+      const lb = gl.getAttribLocation(lineProg, 'seed')
+      const lc = gl.getAttribLocation(lineProg, 't01')
+      const ld = gl.getAttribLocation(lineProg, 'phase')
+      gl.enableVertexAttribArray(la)
+      gl.vertexAttribPointer(la, 3, gl.FLOAT, false, 24, 0)
+      gl.enableVertexAttribArray(lb)
+      gl.vertexAttribPointer(lb, 1, gl.FLOAT, false, 24, 12)
+      gl.enableVertexAttribArray(lc)
+      gl.vertexAttribPointer(lc, 1, gl.FLOAT, false, 24, 16)
+      gl.enableVertexAttribArray(ld)
+      gl.vertexAttribPointer(ld, 1, gl.FLOAT, false, 24, 20)
     }
     const bindPointAttrs = () => {
       gl.bindBuffer(gl.ARRAY_BUFFER, ptBuf)
       gl.vertexAttribPointer(locPos, 3, gl.FLOAT, false, 16, 0)
       gl.vertexAttribPointer(locSeed, 1, gl.FLOAT, false, 16, 12)
     }
-    const bindLineAttrs = () => {
-      gl.bindBuffer(gl.ARRAY_BUFFER, lineBuf)
-      const la = gl.getAttribLocation(lineProg, 'position')
-      const lb = gl.getAttribLocation(lineProg, 'seed')
-      gl.enableVertexAttribArray(la)
-      gl.vertexAttribPointer(la, 3, gl.FLOAT, false, 16, 0)
-      gl.enableVertexAttribArray(lb)
-      gl.vertexAttribPointer(lb, 1, gl.FLOAT, false, 16, 12)
-    }
+
+    gl.enable(gl.BLEND)
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
 
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)')
-    let raf = 0, visible = true, last = 0, time = 0, energyS = 0, levelS = 0, plexS = 0
+    let raf = 0, visible = true, last = 0, time = 0, energyS = 0, levelS = 0, plexS = 0.55
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 1.25)
       const r = root.getBoundingClientRect()
@@ -954,26 +1058,38 @@ function Orb3D({ size = 220, onClick, ariaLabel }) {
       const energy = st === 'thinking' ? 0.85 : st === 'listening' ? 0.45 + levelS * 0.55
         : st === 'speaking' ? 0.3 + levelS * 0.7 : 0.08 + 0.04 * Math.sin(time * 0.9)
       energyS = orbEase(energyS, energy, 1 - Math.exp(-dt * 5))
-      // Plexus: the structure unravels into a neural network while speaking
-      // (partial swell while thinking), then re-forms. Reference behavior.
-      const plexTarget = st === 'speaking' ? 1 : st === 'thinking' ? 0.3 : 0
+      // neural net density: dim slow web at idle, fully lit while speaking
+      const plexTarget = st === 'speaking' ? 1.0 : st === 'thinking' ? 0.8 : st === 'listening' ? 0.7 : 0.55
       plexS = orbEase(plexS, plexTarget, 1 - Math.exp(-dt * 4))
       let base = colorRef.current || [0.36, 0.84, 1]
       if (st === 'listening') base = [1.0, 0.32, 0.3] // red core while listening
       gl.clearColor(0, 0, 0, 0)
       gl.clear(gl.COLOR_BUFFER_BIT)
-      if (lineProg && lineCount > 0 && plexS > 0.02) {
+      // layer 1: plasma core
+      if (coreProg) {
+        gl.useProgram(coreProg)
+        bindCoreAttrs()
+        gl.uniform1f(UC.iTime, time)
+        gl.uniform1f(UC.uEnergy, energyS)
+        gl.uniform1f(UC.uLevel, levelS)
+        gl.uniform3f(UC.uCol1, base[0], base[1], base[2])
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+      }
+      // layer 2: neural edges (always on — density/pulse driven by state)
+      if (lineProg && lineCount > 0) {
         gl.useProgram(lineProg)
+        bindLineAttrs()
         gl.uniform1f(UL.iTime, time)
         gl.uniform2f(UL.iRes, cv.width, cv.height)
         gl.uniform3f(UL.uCol1, base[0], base[1], base[2])
         gl.uniform1f(UL.uEnergy, energyS)
+        gl.uniform1f(UL.uLevel, levelS)
         gl.uniform1f(UL.uPlex, plexS)
-        bindLineAttrs()
         gl.drawArrays(gl.LINES, 0, lineCount)
-        gl.useProgram(prog)
-        bindPointAttrs()
       }
+      // layer 3: neuron shell points
+      gl.useProgram(prog)
+      bindPointAttrs()
       gl.uniform1f(U.iTime, time)
       gl.uniform2f(U.iRes, cv.width, cv.height)
       gl.uniform3f(U.uCol1, base[0], base[1], base[2])
@@ -1024,6 +1140,7 @@ function Orb3D({ size = 220, onClick, ariaLabel }) {
     ]
   })
 }
+
 
 const ORB_STATE_COLORS = {
   idle: 'var(--ui-text-tertiary)',

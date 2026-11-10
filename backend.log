@@ -1,0 +1,17 @@
+INFO:     Started server process [34580]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8785 (Press CTRL+C to quit)
+INFO:     127.0.0.1:8275 - "GET /api/plugins/agentos/healthz HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:15503 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:15504 - "GET /api/plugins/agentos/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:23011 - "GET /api/plugins/agentos/advisor HTTP/1.1" 200 OK
+INFO:     127.0.0.1:23012 - "GET /api/plugins/agentos/planner/today HTTP/1.1" 200 OK
+INFO:     127.0.0.1:31439 - "GET /api/plugins/agentos/brief/today HTTP/1.1" 200 OK
+INFO:     127.0.0.1:11458 - "GET /api/plugins/agentos/agents_activity HTTP/1.1" 200 OK
+INFO:     127.0.0.1:31440 - "GET /api/plugins/agentos/quotes?symbols=SPY%2CQQQ%2CNVDA%2CMSFT&crypto=BTC-USD%2CETH-USD HTTP/1.1" 200 OK
+INFO:     127.0.0.1:23009 - "GET /api/plugins/agentos/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:23008 - "GET /api/plugins/agentos/todos HTTP/1.1" 200 OK
+INFO:     127.0.0.1:23010 - "GET /api/plugins/agentos/connectors HTTP/1.1" 200 OK
+INFO:     127.0.0.1:31068 - "GET /api/plugins/agentos/releases HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6973 - "GET /api/plugins/agentos/status HTTP/1.1" 200 OK

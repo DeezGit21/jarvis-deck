@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 // real plugin backend first (standalone uvicorn on :8775, see
 // dashboard/standalone.py) and fall back to mocks when it isn't running.
 const PLUGIN_PROXY = {
-  '/api/plugins/agentos': { target: 'http://127.0.0.1:8775', changeOrigin: true },
+  '/api/plugins/agentos': { target: 'http://127.0.0.1:8785', changeOrigin: true },
 }
 export default defineConfig({
   plugins: [react(), tailwindcss()],
