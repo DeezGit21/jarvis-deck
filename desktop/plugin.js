@@ -1606,6 +1606,21 @@ function TodosCard() {
       setBusy(false)
     }
   }
+  const [doneId, setDoneId] = useState(null)
+  const complete = async t => {
+    if (doneId) return
+    setDoneId(t.id)
+    setErr('')
+    haptic('tap')
+    try {
+      await REST('/todos/complete', { method: 'POST', body: { id: t.id, title: t.title } })
+      await qc.invalidateQueries({ queryKey: ['agentos', 'todos'] })
+    } catch (e) {
+      setErr(e && e.message ? String(e.message).slice(0, 160) : 'complete failed')
+    } finally {
+      setDoneId(null)
+    }
+  }
   const q = useQuery({
     queryKey: ['agentos', 'todos'],
     queryFn: () => REST('/todos'),
@@ -1682,7 +1697,16 @@ function TodosCard() {
                 className: 'shrink-0 rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 text-[0.65rem] uppercase tracking-wider text-(--ui-text-tertiary)',
                 children: t.status
               }),
-              jsx('span', { className: 'text-(--ui-text-secondary)', children: t.title })
+              jsx('span', { className: 'min-w-0 flex-1 text-(--ui-text-secondary)', children: t.title }),
+              jsx('button', {
+                type: 'button',
+                disabled: doneId === t.id,
+                onClick: () => complete(t),
+                title: 'Mark done (syncs to Telegram)',
+                'aria-label': 'Complete: ' + t.title,
+                className: 'shrink-0 rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary) transition-colors hover:border-[#3fb950] hover:text-[#3fb950] disabled:opacity-40',
+                children: doneId === t.id ? '…' : '✓'
+              })
             ]
           }, t.id)
         ) }),
