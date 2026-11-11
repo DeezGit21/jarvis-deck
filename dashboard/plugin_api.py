@@ -1017,9 +1017,11 @@ _TTS_GEMINI_STYLE = (
 
 def _tts_cfg() -> dict:
     tts_cfg = _CFG.get("tts") if isinstance(_CFG.get("tts"), dict) else {}
+    # settings.json wins over agentos.yaml (the deck's Settings panel writes it)
+    override = str(_load_settings().get("tts_voice") or "").strip()
     return {
         "provider": str(tts_cfg.get("provider") or "gemini").strip().lower(),
-        "voice": str(tts_cfg.get("voice") or "en-GB-RyanNeural"),
+        "voice": override or str(tts_cfg.get("voice") or "en-GB-RyanNeural"),
         "rate": str(tts_cfg.get("rate") or "+4%"),
         "gemini_voice": str(tts_cfg.get("gemini_voice") or "Charon"),
     }
@@ -2167,3 +2169,82 @@ def import_data(body: dict = Body(...)):
     if not restored:
         raise HTTPException(status_code=400, detail="nothing recognizable in bundle")
     return {"ok": True, "restored": restored}
+
+
+# ---------------------------------------------------------------- settings (deck customization)
+
+SETTINGS_FILE = AGENTOS / "settings.json"
+
+_SETTINGS_DEFAULTS = {
+    "tts_voice": "",  # "" = use agentos.yaml voice
+}
+
+# .env keys the settings panel may read (presence only) or write. Passwords are
+# deliberately excluded — credentials never flow through chat or the deck UI.
+_SETTINGS_KEYS = {
+    "GEMINI_API_KEY": "Gemini — vision, broadcast script, TTS",
+    "STRIPE_SECRET_KEY": "Stripe — balance & payouts",
+    "PLAID_CLIENT_ID": "Plaid — banks (client id)",
+    "PLAID_SECRET": "Plaid — banks (secret)",
+    "PLANNER_FIREBASE_KEY": "ADHD Planner — absolute path to the service-account JSON",
+    "WEBULL_USERNAME": "Webull login (username or email)",
+}
+
+
+def _load_settings() -> dict:
+    try:
+        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {**_SETTINGS_DEFAULTS, **data}
+    except (json.JSONDecodeError, OSError):
+        pass
+    return dict(_SETTINGS_DEFAULTS)
+
+
+@router.get("/settings")
+def settings_get():
+    env = _read_env()
+    return {
+        "date": _local_date(),
+        "settings": _load_settings(),
+        "keys": {name: {"set": bool(env.get(name)), "hint": hint}
+                 for name, hint in _SETTINGS_KEYS.items()},
+    }
+
+
+@router.post("/settings")
+def settings_set(body: dict = Body(...)):
+    cur = _load_settings()
+    for k, v in body.items():
+        if k in _SETTINGS_DEFAULTS:
+            try:
+                cur[k] = type(_SETTINGS_DEFAULTS[k])(v)
+            except (TypeError, ValueError):
+                pass
+    AGENTOS.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(cur, indent=1), encoding="utf-8")
+    return {"ok": True, "settings": cur}
+
+
+@router.post("/settings/keys")
+def settings_set_key(body: dict = Body(...)):
+    """Write one whitelisted API key into ~/.hermes/agentos/.env (upsert)."""
+    name = str(body.get("name") or "").strip()
+    value = str(body.get("value") or "").strip()
+    if name not in _SETTINGS_KEYS:
+        raise HTTPException(status_code=400, detail="unsupported key name")
+    if not value:
+        raise HTTPException(status_code=400, detail="value required")
+    lines = ENV_FILE.read_text(encoding="utf-8").splitlines() if ENV_FILE.exists() else []
+    out, replaced = [], False
+    for line in lines:
+        if line.split("=", 1)[0].strip() == name:
+            out.append(f"{name}={value}")
+            replaced = True
+        else:
+            out.append(line)
+    if not replaced:
+        out.append(f"{name}={value}")
+    AGENTOS.mkdir(parents=True, exist_ok=True)
+    ENV_FILE.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return {"ok": True, "name": name, "set": True}

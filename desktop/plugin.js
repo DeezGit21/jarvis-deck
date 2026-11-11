@@ -139,6 +139,17 @@ html.ao-companion, html.ao-companion body, html.ao-companion #root { background:
 .ao-btn[data-kind='restart']:hover { border-color: #ffb84d; color: #ffb84d; }
 .ao-btn[data-kind='delegate']:hover { border-color: #5cd6ff; color: #5cd6ff; }
 .ao-btn:disabled { opacity: .4; pointer-events: none; }
+.ao-range { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px;
+  background: color-mix(in srgb, var(--ui-accent) 18%, transparent); outline: none; cursor: pointer; }
+.ao-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--ui-accent); box-shadow: 0 0 8px color-mix(in srgb, var(--ui-accent) 70%, transparent); cursor: pointer; }
+.ao-range::-moz-range-thumb { width: 14px; height: 14px; border: none; border-radius: 50%;
+  background: var(--ui-accent); box-shadow: 0 0 8px color-mix(in srgb, var(--ui-accent) 70%, transparent); cursor: pointer; }
+.ao-select { background: color-mix(in srgb, var(--ui-card) 90%, transparent); border: 1px solid var(--ui-stroke-secondary);
+  border-radius: 8px; padding: 4px 8px; font: 500 0.75rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--ui-text-secondary); outline: none; cursor: pointer; }
+.ao-select:focus { border-color: var(--ui-accent); }
+.ao-select option { background: #0a0e14; color: var(--ui-text-primary); }
 .ao-mini-term { font: 400 .65rem/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: rgba(0,0,0,.45); border-radius: 4px; padding: 3px 6px; margin-top: 4px;
   max-height: 5.4rem; overflow-y: auto; white-space: pre-wrap; word-break: break-all; color: #5cd6ff; }
@@ -242,7 +253,7 @@ html.ao-companion, html.ao-companion body, html.ao-companion #root { background:
   cursor: pointer; font-size: .7rem; line-height: 1; transition: color .15s, border-color .15s; }
 .ao-wbtn:hover { color: var(--ui-text-primary); border-color: var(--ui-stroke-secondary); }
 .ao-wbtn[draggable='true'] { cursor: grab; }
-.ao-tabline { position: absolute; bottom: 0; height: 2px; width: 25%;
+.ao-tabline { position: absolute; bottom: 0; height: 2px; width: 20%;
   background: var(--ui-accent); box-shadow: 0 0 10px color-mix(in srgb, var(--ui-accent) 70%, transparent);
   transition: transform .3s cubic-bezier(.2,.7,.3,1); }
 
@@ -3888,6 +3899,251 @@ function MemoryCard() {
   })
 }
 
+// ------------------------------------------------------------ settings
+
+// localStorage number kept in sync across deck windows (the HUD companion is a
+// second BrowserWindow on the same origin) via the standard storage event.
+function useSharedNum(key, def) {
+  const read = () => {
+    try {
+      const n = JSON.parse(localStorage.getItem(key))
+      return typeof n === 'number' ? n : def
+    } catch { return def }
+  }
+  const [v, setV] = useState(read)
+  useEffect(() => {
+    const onStorage = e => { if (e.key === key) setV(read()) }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [key]) // eslint-disable-line react-hooks/exhaustive-deps
+  const set = nv => {
+    const clamped = Math.max(0, Math.min(1, Number(nv) || 0))
+    setV(clamped)
+    try { localStorage.setItem(key, JSON.stringify(clamped)) } catch { /* ignore */ }
+  }
+  return [v, set]
+}
+
+const TTS_VOICES = [
+  ['', 'Deck default (agentos.yaml)'],
+  ['en-GB-RyanNeural', 'Ryan — British male'],
+  ['en-GB-SoniaNeural', 'Sonia — British female'],
+  ['en-US-GuyNeural', 'Guy — American male'],
+  ['en-US-AriaNeural', 'Aria — American female'],
+  ['en-AU-NatashaNeural', 'Natasha — Australian female'],
+]
+
+function SettingsSection() {
+  const qc = useQueryClient()
+  const q = useQuery({ queryKey: ['agentos', 'settings'], queryFn: () => REST('/settings') })
+  const cq = useQuery({ queryKey: ['agentos', 'connectors'], queryFn: () => REST('/connectors'), refetchInterval: 120000 })
+  const [accent, setAccent] = useLocal('agentos-accent', null)
+  const [hudOp, setHudOp] = useSharedNum('agentos-hud-opacity', 1)
+  const [ttsVol, setTtsVol] = useSharedNum('agentos-tts-vol', 1)
+  const [chimesOff, setChimesOff] = useState(() => { try { return localStorage.getItem('agentos-chimes') === 'off' } catch { return false } })
+  const d = q.data
+  const [voice, setVoice] = useState('')
+  const [voiceSaved, setVoiceSaved] = useState('')
+  useEffect(() => { if (d && d.settings) { setVoice(d.settings.tts_voice || ''); setVoiceSaved(d.settings.tts_voice || '') } }, [d])
+  const [keyDrafts, setKeyDrafts] = useState({})
+  const [keyBusy, setKeyBusy] = useState(null)
+  const [keyMsg, setKeyMsg] = useState(null)
+  const [connBusy, setConnBusy] = useState(null)
+  const [connMsg, setConnMsg] = useState(null)
+
+  async function saveVoice() {
+    try {
+      await REST('/settings', { method: 'POST', body: { tts_voice: voice } })
+      setVoiceSaved(voice)
+      qc.invalidateQueries({ queryKey: ['agentos', 'settings'] })
+    } catch (e) { setKeyMsg('voice: ' + String(e && e.message || e).slice(0, 120)) }
+  }
+
+  async function saveKey(name) {
+    const value = (keyDrafts[name] || '').trim()
+    if (!value || keyBusy) return
+    setKeyBusy(name)
+    setKeyMsg(null)
+    try {
+      await REST('/settings/keys', { method: 'POST', body: { name, value } })
+      setKeyDrafts(m => ({ ...m, [name]: '' }))
+      setKeyMsg(name + ' saved to ~/.hermes/agentos/.env')
+      await qc.invalidateQueries({ queryKey: ['agentos', 'settings'] })
+    } catch (e) {
+      setKeyMsg(name + ': ' + String(e && e.message || e).slice(0, 140))
+    } finally { setKeyBusy(null) }
+  }
+
+  async function connectConnector(name) {
+    setConnBusy(name)
+    setConnMsg(null)
+    try {
+      const r = await REST('/connectors/connect', { method: 'POST', body: { name } })
+      if (r && r.url) openExternal(r.url)
+      else setConnMsg('no authorization URL returned')
+    } catch (e) {
+      setConnMsg(String(e && e.message || e).slice(0, 160))
+    } finally { setConnBusy(null) }
+  }
+
+  const hosted = (cq.data && cq.data.hosted) || []
+  const mcps = (cq.data && cq.data.mcps) || []
+  const pct = v => Math.round(v * 100) + '%'
+
+  return jsxs('div', { className: 'mx-auto flex w-full max-w-4xl flex-col gap-3', children: [
+    // ---- appearance
+    jsx(AoCard, {
+      label: 'appearance & sound', delay: 40,
+      children: jsxs('div', { className: 'grid gap-4 sm:grid-cols-2', children: [
+        jsxs('div', { className: 'space-y-3', children: [
+          jsxs('div', { children: [
+            jsxs('div', { className: 'mb-1 flex items-baseline justify-between', children: [
+              jsx('span', { className: 'ao-label', children: 'hud transparency' }),
+              jsx('span', { className: 'font-mono text-[0.7rem] text-(--ui-text-tertiary)', children: pct(hudOp) })
+            ] }),
+            jsx('input', {
+              type: 'range', min: 0.25, max: 1, step: 0.05, value: hudOp,
+              onChange: e => setHudOp(e.target.value),
+              className: 'ao-range', 'aria-label': 'HUD transparency'
+            })
+          ] }),
+          jsxs('div', { children: [
+            jsxs('div', { className: 'mb-1 flex items-baseline justify-between', children: [
+              jsx('span', { className: 'ao-label', children: 'voice volume' }),
+              jsx('span', { className: 'font-mono text-[0.7rem] text-(--ui-text-tertiary)', children: pct(ttsVol) })
+            ] }),
+            jsx('input', {
+              type: 'range', min: 0, max: 1, step: 0.05, value: ttsVol,
+              onChange: e => { setTtsVol(e.target.value); Tts.setVolume(e.target.value) },
+              className: 'ao-range', 'aria-label': 'Voice volume'
+            })
+          ] }),
+          jsx('button', {
+            type: 'button',
+            className: cn('ao-btn', !chimesOff && 'border-(--ui-accent) text-(--ui-accent)'),
+            onClick: () => {
+              const next = !chimesOff
+              setChimesOff(next)
+              try { localStorage.setItem('agentos-chimes', next ? 'off' : 'on') } catch { /* ignore */ }
+              if (!next) Chimes.play('up')
+            },
+            'aria-pressed': String(!chimesOff),
+            children: chimesOff ? 'Chimes: off' : 'Chimes: on'
+          })
+        ] }),
+        jsxs('div', { className: 'space-y-3', children: [
+          jsxs('div', { children: [
+            jsx('div', { className: 'ao-label mb-1.5', children: 'accent theme' }),
+            jsxs('div', { className: 'flex items-center gap-2', children: [
+              Object.entries(AO_THEMES).map(([name, col]) =>
+                jsx('span', {
+                  className: 'ao-dot',
+                  'data-active': accent === name ? '1' : '0',
+                  style: { background: col, color: col },
+                  onClick: () => { haptic('tap'); setAccent(accent === name ? null : name) },
+                  title: name
+                }, name)
+              ),
+              jsx('button', { type: 'button', className: 'ao-wbtn', title: 'Reset to deck default', onClick: () => setAccent(null), children: '↺' })
+            ] })
+          ] }),
+          jsxs('div', { children: [
+            jsx('div', { className: 'ao-label mb-1.5', children: 'jarvis voice' }),
+            jsxs('div', { className: 'flex items-center gap-2', children: [
+              jsx('select', {
+                className: 'ao-select flex-1', value: voice,
+                onChange: e => setVoice(e.target.value),
+                'aria-label': 'Jarvis voice',
+                children: TTS_VOICES.map(([val, label]) => jsx('option', { value: val, children: label }, val))
+              }),
+              voice !== voiceSaved && jsx('button', { type: 'button', className: 'ao-btn', onClick: saveVoice, children: 'Save' })
+            ] })
+          ] }),
+          jsx('button', {
+            type: 'button', className: 'ao-btn',
+            onClick: () => { Tts.ack('Testing, one two three. Standing by, sir.') },
+            children: 'Test voice'
+          })
+        ] })
+      ] })
+    }),
+    // ---- api keys
+    jsx(AoCard, {
+      label: 'api keys', delay: 100,
+      right: jsx('span', { className: 'font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: 'stored in ~/.hermes/agentos/.env' }),
+      children: jsxs('div', { className: 'space-y-2', children: [
+        q.isLoading && jsx(Skel, { h: '6rem' }),
+        d && Object.entries(d.keys || {}).map(([name, info]) =>
+          jsxs('div', { className: 'flex flex-wrap items-center gap-2 rounded-md px-1 py-1.5', children: [
+            jsx(Led, { up: info.set ? true : false }),
+            jsxs('div', { className: 'min-w-0 flex-1 basis-48', children: [
+              jsx('div', { className: 'font-mono text-xs text-(--ui-text-primary)', children: name }),
+              jsx('div', { className: 'truncate text-[0.68rem] text-(--ui-text-tertiary)', title: info.hint, children: info.hint })
+            ] }),
+            jsx('input', {
+              type: 'password', value: keyDrafts[name] || '',
+              onChange: e => setKeyDrafts(m => ({ ...m, [name]: e.target.value })),
+              onKeyDown: e => { if (e.key === 'Enter') saveKey(name) },
+              placeholder: info.set ? '•••••••• (set)' : 'paste value…',
+              autoComplete: 'off', spellCheck: false,
+              className: 'w-44 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) px-2 py-1 font-mono text-xs text-(--ui-text-primary) outline-none placeholder:text-(--ui-text-quaternary) focus:border-(--ui-accent)'
+            }),
+            jsx('button', {
+              type: 'button', className: 'ao-btn',
+              disabled: !keyDrafts[name] || keyBusy === name,
+              onClick: () => saveKey(name),
+              children: keyBusy === name ? '…' : 'Save'
+            })
+          ] }, name)
+        ),
+        jsx('div', { className: 'text-[0.68rem] text-(--ui-text-quaternary)', children:
+          'Passwords (Webull) stay out of this panel — edit ~/.hermes/agentos/.env directly.' }),
+        keyMsg && jsx('div', { className: 'font-mono text-[0.68rem] text-(--ui-accent)', children: keyMsg })
+      ] })
+    }),
+    // ---- integrations
+    jsx(AoCard, {
+      label: 'tools & integrations', delay: 160,
+      right: jsx('button', {
+        type: 'button', className: 'text-xs text-(--ui-accent)',
+        onClick: () => cq.refetch(), children: 'Refresh'
+      }),
+      children: jsxs('div', { className: 'grid gap-4 sm:grid-cols-2', children: [
+        jsxs('div', { children: [
+          jsx('div', { className: 'ao-label mb-2', children: 'connector accounts' }),
+          jsx('div', { className: 'space-y-1', children: hosted.map(c =>
+            jsxs('div', { className: 'flex items-center gap-2 rounded-md px-1 py-1 text-sm', children: [
+              jsx(Led, { up: c.connected ? true : false }),
+              jsx('span', { className: 'min-w-0 flex-1 truncate text-(--ui-text-secondary)', children: c.name }),
+              c.connected && c.url && jsx('button', {
+                type: 'button', className: 'ao-btn', onClick: () => openExternal(c.url), children: 'Open'
+              }),
+              !c.connected && jsx('button', {
+                type: 'button', className: 'ao-btn', disabled: connBusy === c.name,
+                onClick: () => connectConnector(c.name),
+                children: connBusy === c.name ? '…' : 'Connect'
+              })
+            ] }, c.name)
+          ) })
+        ] }),
+        jsxs('div', { children: [
+          jsx('div', { className: 'ao-label mb-2', children: 'local mcp servers' }),
+          jsx('div', { className: 'space-y-1', children: mcps.map(m =>
+            jsxs('div', { className: 'flex items-center gap-2 rounded-md px-1 py-1 text-sm', children: [
+              jsx(Led, { up: m.enabled ? true : false }),
+              jsx('span', { className: 'min-w-0 flex-1 truncate text-(--ui-text-secondary)', children: m.name }),
+              m.url && jsx('button', {
+                type: 'button', className: 'ao-btn', onClick: () => openExternal(m.url), children: 'Open'
+              })
+            ] }, m.name)
+          ) }),
+          connMsg && jsx('div', { className: 'mt-2 font-mono text-[0.68rem] text-[#f5495b]', children: connMsg })
+        ] })
+      ] })
+    })
+  ] })
+}
+
 const WIDGETS = {
   hero:    { title: 'Jarvis',        span: 12, rows: 1, render: p => jsx(HeroWidget, p) },
   advisor: { title: 'Advisor',       span: 4,  rows: 5, render: () => jsx(AdvisorCard, {}) },
@@ -4219,6 +4475,7 @@ function GraphMode() {
 }
 
 function HudOverlay() {
+  const [hudOp] = useSharedNum('agentos-hud-opacity', 1)
   const [state, setState] = useState(OrbBus.state)
   useEffect(() => OrbBus.subscribe(setState), [])
   const [, force] = useState(0)
@@ -4267,6 +4524,7 @@ function HudOverlay() {
   return jsxs('div', {
     ref: rootRef,
     className: 'ao-hud ao-in' + (companion ? ' ao-hud-fill ao-hud-drag' : ''),
+    style: { opacity: hudOp },
     children: [
       jsxs('div', { className: 'flex items-center gap-3', children: [
         jsx(MiniOrb, { size: 46 }),
@@ -4374,7 +4632,8 @@ function AgentosPage() {
     ['overview', 'Overview'],
     ['vision', 'Vision'],
     ['money', 'Money'],
-    ['goals', 'Goals']
+    ['goals', 'Goals'],
+    ['settings', 'Settings']
   ]
   const tabIndex = tabs.findIndex(t => t[0] === tab)
 
@@ -4507,7 +4766,7 @@ function AgentosPage() {
         ] })
       ] }),
       // tabs
-      jsxs('div', { className: 'relative z-10 grid grid-cols-4 border-b border-(--ui-stroke-secondary)', children: [
+      jsxs('div', { className: 'relative z-10 grid grid-cols-5 border-b border-(--ui-stroke-secondary)', children: [
         tabs.map(([id, label]) =>
           jsx('button', {
             type: 'button',
@@ -4546,7 +4805,8 @@ function AgentosPage() {
         tab === 'goals' && jsxs('div', { className: 'mx-auto w-full max-w-4xl flex flex-col gap-3', children: [
           jsx(WidgetBoundary, { children: jsx(GoalsCard, {}) }),
           jsx(WidgetBoundary, { children: jsx(ExportCard, {}) })
-        ] })
+        ] }),
+        tab === 'settings' && jsx(WidgetBoundary, { children: jsx(SettingsSection, {}) })
       ] }),
       jsx(Spotlight, { open: spotOpen, onClose: () => setSpotOpen(false) }),
       jsx(ServiceDrawer, { svcs, open: svcOpen, onClose: () => setSvcOpen(false) }),
