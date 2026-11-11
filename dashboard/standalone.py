@@ -22,7 +22,9 @@ from plugin_api import router  # noqa: E402
 app = FastAPI(title="agentos plugin api (standalone preview)")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:4517", "http://127.0.0.1:4517"],
+    allow_origins=["http://localhost:4517", "http://127.0.0.1:4517",
+                   "https://www.webull.com", "https://app.webull.com",
+                   "https://webull.com", "https://trade.webull.com"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
