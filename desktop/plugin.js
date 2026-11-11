@@ -104,6 +104,8 @@ const CSS = `
   background: color-mix(in srgb, var(--ui-card) 80%, transparent);
   font: 500 0.6875rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--ui-text-tertiary); }
+.ao-press { transition: color .25s cubic-bezier(.23,1,.32,1), transform .25s cubic-bezier(.23,1,.32,1), border-color .25s cubic-bezier(.23,1,.32,1), box-shadow .25s cubic-bezier(.23,1,.32,1); }
+.ao-press:active { transform: scale(.97); }
 
 /* --- spotlight command runner --- */
 .ao-spot-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: flex-start;
@@ -469,7 +471,7 @@ const Chimes = {
   }
 }
 
-const AO_THEMES = { cyan: '#5cd6ff', amber: '#ffb84d', emerald: '#3fb950', crimson: '#f5495b' }
+const AO_THEMES = { cyan: '#5cd6ff', amber: '#ffb84d', emerald: '#3fb950', crimson: '#f5495b', violet: '#a855f7' }
 
 // ------------------------------------------------------------ assistant state bus
 
@@ -480,13 +482,16 @@ const ORB_LABELS = {
   idle: 'Voice assistant: idle',
   listening: 'Voice assistant: listening',
   thinking: 'Voice assistant: thinking',
-  speaking: 'Voice assistant: speaking'
+  speaking: 'Voice assistant: speaking',
+  working: 'Voice assistant: working'
 }
 
 // App-wide assistant state so the orb and the console react from anywhere.
 const OrbBus = {
   state: 'idle',
+  _mood: 'ok',
   _subs: new Set(),
+  _moodSubs: new Set(),
   _level: 0,
   _simRaf: 0,
   _micStream: null,
@@ -495,8 +500,16 @@ const OrbBus = {
   _micBuf: null,
   _micRaf: 0,
   subscribe(fn) { this._subs.add(fn); return () => this._subs.delete(fn) },
+  subscribeMood(fn) { this._moodSubs.add(fn); return () => this._moodSubs.delete(fn) },
   emit() { for (const fn of this._subs) { try { fn(this.state) } catch { /* ignore */ } } },
+  emitMood() { for (const fn of this._moodSubs) { try { fn(this._mood) } catch { /* ignore */ } } },
   level() { return this._level },
+  mood() { return this._mood },
+  setMood(val) {
+    if (this._mood === val) return
+    this._mood = val
+    this.emitMood()
+  },
   set(state) {
     if (this.state === state) return
     this.state = state
@@ -584,7 +597,7 @@ const ConsoleStore = {
     if (!query || this.busy) return false
     this.add({ role: 'you', text: query })
     this.setBusy(true)
-    OrbBus.set('thinking')
+    OrbBus.set(query.startsWith('/') ? 'working' : 'thinking')
     try {
       const r = await REST('/command', { method: 'POST', body: { query } })
       this.add({ role: 'jarvis', text: r.reply })
@@ -1051,14 +1064,18 @@ function Orb3D({ size = 220, onClick, ariaLabel }) {
       const st = OrbBus.state
       const rawLvl = orbClamp01(OrbBus.level())
       levelS = orbEase(levelS, rawLvl, rawLvl > levelS ? 1 - Math.exp(-dt * 22) : 1 - Math.exp(-dt * 6))
-      const energy = st === 'thinking' ? 0.85 : st === 'listening' ? 0.45 + levelS * 0.55
+      const energy = st === 'thinking' || st === 'working' ? 0.85 : st === 'listening' ? 0.45 + levelS * 0.55
         : st === 'speaking' ? 0.3 + levelS * 0.7 : 0.08 + 0.04 * Math.sin(time * 0.9)
       energyS = orbEase(energyS, energy, 1 - Math.exp(-dt * 5))
       // neural net density: dim slow web at idle, fully lit while speaking
-      const plexTarget = st === 'speaking' ? 1.0 : st === 'thinking' ? 0.8 : st === 'listening' ? 0.7 : 0.55
+      const plexTarget = st === 'speaking' ? 1.0 : st === 'thinking' || st === 'working' ? 0.8 : st === 'listening' ? 0.7 : 0.55
       plexS = orbEase(plexS, plexTarget, 1 - Math.exp(-dt * 4))
       let base = colorRef.current || [0.36, 0.84, 1]
+      const mVal = OrbBus.mood()
       if (st === 'listening') base = [1.0, 0.32, 0.3] // red core while listening
+      else if (st === 'thinking' || st === 'working' || st === 'speaking') base = [0.66, 0.33, 0.97] // violet active
+      else if (mVal === 'alert') base = [0.96, 0.29, 0.36] // crimson mood alert
+      else if (mVal === 'degraded') base = [1.0, 0.72, 0.30] // amber mood degraded
       gl.clearColor(0, 0, 0, 0)
       gl.clear(gl.COLOR_BUFFER_BIT)
       // layer 1: plasma core
@@ -1142,7 +1159,8 @@ const ORB_STATE_COLORS = {
   idle: 'var(--ui-text-tertiary)',
   listening: '#f85149',
   thinking: 'var(--ui-accent)',
-  speaking: 'var(--ui-accent)'
+  speaking: 'var(--ui-accent)',
+  working: '#a855f7'
 }
 
 // ------------------------------------------------------------ orb HUD rings
@@ -1161,7 +1179,9 @@ function OrbHud() {
     const t0 = performance.now()
     let level = 0
     let st = OrbBus.state
+    let md = OrbBus.mood()
     const unsub = OrbBus.subscribe(s => { st = s })
+    const unsubMood = OrbBus.subscribeMood(m => { md = m })
     let accent = '#5cd6ff'
     const readAccent = () => {
       try {
@@ -1169,6 +1189,11 @@ function OrbHud() {
         const v = getComputedStyle(probe).getPropertyValue('--ui-accent').trim()
         if (v) accent = v
       } catch { /* keep fallback */ }
+    }
+    const moodColor = () => {
+      if (md === 'alert') return '#f5495b'
+      if (md === 'degraded') return '#ffb84d'
+      return null // use state-based color
     }
     const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
     let w = 0, h = 0
@@ -1200,12 +1225,17 @@ function OrbHud() {
       ctx.clearRect(0, 0, w, h)
       const R = Math.min(w, h) / 2
       if (R < 10) { raf = requestAnimationFrame(frame); return }
-      // ---- hud v2: one state ring (means something) + instrument ticks +
-      // compass readouts + core reticle. Fewer strokes, more information.
       const listening = st === 'listening'
       const speaking = st === 'speaking'
-      const busy = st === 'thinking' || speaking
-      const col = listening ? '#f85149' : accent
+      const busy = st === 'thinking' || st === 'working' || speaking
+      // Mood overrides state color for the ring tint; state drives motion intensity
+      const moodOverride = moodColor()
+      let col
+      if (moodOverride) col = moodOverride
+      else if (listening) col = '#f85149'
+      else if (st === 'thinking' || st === 'working') col = '#a855f7'
+      else if (speaking) col = '#a855f7'
+      else col = accent
       const speed = reduce.matches ? 0 : listening ? 1.0 : busy ? 0.55 : 0.12
       const base = listening ? 0.9 : busy ? 0.8 : 0.55
       const CX = w / 2, CY = h / 2
@@ -1215,7 +1245,7 @@ function OrbHud() {
       arc(R * 0.86, 0, Math.PI * 2, 1, col)
 
       // the state arc itself
-      if (st === 'thinking') {
+      if (st === 'thinking' || st === 'working') {
         // comet sweep: bright head with a short decaying tail
         const head = t * speed * 2.2
         ctx.globalAlpha = base * 0.35
@@ -1281,6 +1311,7 @@ function OrbHud() {
       cancelAnimationFrame(raf)
       ro.disconnect()
       unsub()
+      unsubMood()
     }
   }, [])
   return jsx('canvas', { ref, className: 'ao-orb-hud', 'aria-hidden': 'true' })
@@ -1797,11 +1828,13 @@ function AdvisorCard() {
   async function act(id, action) {
     setBusyId(id)
     haptic('tap')
+    OrbBus.set('working')
     try {
       await REST('/advisor/action', { method: 'POST', body: { id, action } })
       qc.invalidateQueries({ queryKey: ['agentos', 'advisor'] })
     } catch (e) { /* row stays open; error visible on next refetch */ }
     setBusyId(null)
+    OrbBus.set('idle')
   }
 
   const d = advQ.data
@@ -1809,6 +1842,12 @@ function AdvisorCard() {
   const accountability = (d && d.accountability) || []
   const shownIds = new Set(actions.map(a => a.id))
   const loopRows = accountability.filter(r => !shownIds.has(r.id))
+
+  // Mood: P1 item → alert (overrides degraded from services)
+  useEffect(() => {
+    const hasP1 = actions.some(a => a.tier === 1 && (!a.status || a.status === 'open'))
+    if (hasP1) OrbBus.setMood('alert')
+  }, [actions])
 
   return jsx(AoCard, {
     label: 'advisor — top 3 today',
@@ -2223,6 +2262,7 @@ function VisionCard() {
 
   function runAction(a) {
     Chimes.play('up')
+    OrbBus.set('working')
     JarvisCtl.send(a)
   }
 
@@ -2374,6 +2414,7 @@ function ExportCard() {
     if (pass === null) return
     if (!pass) { setState('export cancelled — empty passphrase'); return }
     setState('packing…')
+    OrbBus.set('working')
     try {
       const d = await REST('/export')
       const plain = new TextEncoder().encode(JSON.stringify({ agentos: 1, date: d.date, goals: d.goals, recs: d.recs, apps: d.apps }))
@@ -2391,8 +2432,10 @@ function ExportCard() {
       a.click()
       URL.revokeObjectURL(a.href)
       setState('exported (encrypted with your passphrase)')
+      OrbBus.set('idle')
     } catch (e) {
       setState('failed: ' + String((e && e.message) || e).slice(0, 140))
+      OrbBus.set('idle')
     }
   }
 
@@ -2401,6 +2444,7 @@ function ExportCard() {
     const pass = window.prompt('Passphrase for this bundle:')
     if (pass === null) return
     setState('decoding…')
+    OrbBus.set('working')
     try {
       const buf = new Uint8Array(await f.arrayBuffer())
       const magic = new TextDecoder().decode(buf.slice(0, 5))
@@ -2413,8 +2457,10 @@ function ExportCard() {
       const plain = JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct)))
       const r = await REST('/import', { method: 'POST', body: { goals: plain.goals, recs: plain.recs, apps: plain.apps } })
       setState('imported: ' + ((r.restored || []).join(', ') || 'nothing'))
+      OrbBus.set('idle')
     } catch (e) {
       setState('failed: ' + String((e && e.message) || e).slice(0, 140))
+      OrbBus.set('idle')
     }
   }
 
@@ -2693,7 +2739,7 @@ function Spotlight({ open, onClose }) {
   })
 }
 
-// ------------------------------------------------------------ hero (orb + headline stats)
+// ------------------------------------------------------------ hero (compact status ribbon)
 
 function HeroWidget({ onOpenSpotlight }) {
   const [state, setState] = useState(OrbBus.state)
@@ -2709,93 +2755,66 @@ function HeroWidget({ onOpenSpotlight }) {
     queryFn: () => REST('/todos'),
     refetchInterval: 120000
   })
-  const metricsQ = useQuery({
-    queryKey: ['agentos', 'metrics'],
-    queryFn: () => REST('/metrics'),
-    refetchInterval: 120000
-  })
-  const connQ = useQuery({
-    queryKey: ['agentos', 'connectors'],
-    queryFn: () => REST('/connectors'),
-    refetchInterval: 300000
-  })
-  const conn = connQ.data
   const svcs = (statusQ.data && statusQ.data.services) || []
   const up = svcs.filter(s => s.up === true).length
+  const down = svcs.filter(s => s.up === false).length
   const open = (todosQ.data && todosQ.data.total_open) || 0
-  const rev = metricsQ.data && metricsQ.data.revenue_mtd
-  const word = { idle: 'Systems standing by', listening: 'Listening…', thinking: 'Processing…', speaking: 'Speaking' }[state]
+  const word = { idle: 'Standing by', listening: 'Listening…', thinking: 'Processing…', speaking: 'Speaking', working: 'Working…' }[state]
 
-  function talk() {
-    if (JarvisCtl.toggleVoice) JarvisCtl.toggleVoice()
-  }
+  // Mood computation for OrbBus (cheap: from already-fetched data)
+  useEffect(() => {
+    if (!statusQ.data) return
+    const mood = down > 0 ? 'degraded' : 'ok'
+    OrbBus.setMood(mood)
+  }, [down, statusQ.data]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return jsx('div', {
     className: 'ao-hero ao-in',
+    style: { padding: '8px 18px', minHeight: 44 },
     children: [
-      // left zone: core telemetry (the reference's left rail)
-      jsxs('div', { className: 'hidden w-40 shrink-0 flex-col justify-center gap-4 lg:flex', children: [
-        jsx('div', { className: 'ao-label mb-1', children: 'core telemetry' }),
-        jsxs('div', { children: [
-          jsx('div', { className: 'ao-label mb-0.5', children: 'services' }),
-          jsx('div', { className: 'ao-num !text-2xl', children: svcs.length ? up + '/' + svcs.length : '—' })
+      // compact state wordmark
+      jsxs('div', { className: 'flex items-center gap-2 shrink-0', children: [
+        jsx('span', {
+          className: 'text-sm font-semibold ao-hero-glow',
+          style: { color: ORB_STATE_COLORS[state] },
+          children: word
+        }),
+        svcs.length > 0 && jsxs('span', { className: 'font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: [
+          'SVC ',
+          jsx('span', { style: { color: down > 0 ? '#f5495b' : '#3fb950' }, children: up + '/' + svcs.length })
         ] }),
-        jsxs('div', { children: [
-          jsx('div', { className: 'ao-label mb-0.5', children: 'open tasks' }),
-          jsx('div', { className: 'ao-num !text-2xl', children: jsx(AnimNum, { value: open }) })
-        ] }),
-        jsxs('div', { children: [
-          jsx('div', { className: 'ao-label mb-0.5', children: 'revenue mtd' }),
-          jsx('div', { className: 'ao-num !text-2xl', children: rev == null ? '—' : jsx(AnimNum, { value: rev, prefix: '$' }) })
-        ] })
+        jsx('span', { className: 'font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: open + ' open' }),
+        jsx('span', { className: 'font-mono text-[0.6rem] text-(--ui-text-quaternary)', children:
+          now.toLocaleTimeString('en-US', { hour12: false })
+        })
       ] }),
-      jsxs('div', {
-        className: 'relative shrink-0 ao-orb-stage',
-        'data-state': state,
-        style: { width: 300, height: 224 },
-        children: [
-          jsx('div', { className: 'ao-orb-base', 'aria-hidden': 'true' }),
-          jsx('div', { className: 'ao-orb-coreglow', 'data-state': state, 'aria-hidden': 'true' }),
-          jsx('div', {
-            className: 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2',
-            children: jsx(Orb3D, { size: 208, onClick: talk, ariaLabel: ORB_LABELS[state] })
-          }),
-          jsx(OrbFrames, { svcs, up, open, rev, onOpenSpotlight }),
-          jsx(OrbCaptions, {})
-        ]
-      }),
-      jsxs('div', { className: 'flex min-w-0 flex-1 flex-col items-end justify-center gap-3 text-right', children: [
-        jsxs('div', { className: 'flex flex-wrap items-baseline justify-end gap-x-3 gap-y-1', children: [
-          jsx('div', {
-            className: 'text-lg font-semibold tracking-wide ao-hero-glow',
-            style: { color: ORB_STATE_COLORS[state] },
-            children: word
-          }),
-          jsx('span', { className: 'text-xs text-(--ui-text-tertiary)', children:
-            now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) +
-            ' · ' + now.toLocaleTimeString('en-US', { hour12: false })
-          })
-        ] }),
-        jsxs('div', { className: 'flex flex-wrap items-center justify-end gap-1.5', children: [
-          jsx('span', { className: 'font-mono text-[0.6rem] uppercase tracking-[0.2em] text-(--ui-text-quaternary)', children: 'protocols' }),
-          ...[
-            ['daily briefing', 'Generate my daily brief'],
-            ['top actions', 'What are my top 3 actions today?'],
-            ['diagnostics', 'Summarize service status']
-          ].map(([label, cmd]) => jsx('button', {
-            type: 'button',
-            className: 'ao-runbtn',
-            onClick: () => { Chimes.play('up'); JarvisCtl.send(cmd) },
-            children: [jsx('span', { className: 'text-(--ui-accent)', children: '◆' }), label]
-          }, label)),
-          jsx('button', {
-            type: 'button',
-            className: 'ao-runbtn',
-            onClick: onOpenSpotlight,
-            title: 'Open the command runner (Ctrl+J)',
-            children: [jsx('span', { className: 'text-(--ui-accent)', children: '⌘' }), 'talk to jarvis']
-          })
-        ] })
+      // right side: protocol buttons
+      jsxs('div', { className: 'flex items-center gap-1.5 ml-auto', children: [
+        jsx('button', {
+          type: 'button', className: 'ao-runbtn',
+          onClick: () => { Chimes.play('up'); JarvisCtl.send('Generate my daily brief') },
+          title: 'Run daily brief',
+          children: [jsx('span', { className: 'text-(--ui-accent)', children: '◆' }), 'brief']
+        }),
+        jsx('button', {
+          type: 'button', className: 'ao-runbtn',
+          onClick: () => { Chimes.play('up'); JarvisCtl.send('What are my top 3 actions today?') },
+          title: 'Top 3 actions',
+          children: [jsx('span', { className: 'text-(--ui-accent)', children: '◆' }), 'top 3']
+        }),
+        jsx('button', {
+          type: 'button', className: 'ao-runbtn',
+          onClick: () => { Chimes.play('up'); JarvisCtl.send('Summarize service status') },
+          title: 'Diagnostics',
+          children: [jsx('span', { className: 'text-(--ui-accent)', children: '◆' }), 'diag']
+        }),
+        jsx('button', {
+          type: 'button',
+          className: 'ao-runbtn border-(--ui-accent)/40 text-(--ui-accent)',
+          onClick: onOpenSpotlight,
+          title: 'Open the command runner (Ctrl+J)',
+          children: [jsx('span', { className: 'text-(--ui-accent)', children: '⌘' }), 'talk to jarvis']
+        })
       ] })
     ]
   })
@@ -2948,11 +2967,15 @@ function buildGalaxy(nodes, nowSec) {
     const y = 1 - (2 * (ci + 0.5)) / keys.length
     const rr = Math.sqrt(Math.max(0, 1 - y * y))
     const th = GOLD * ci
-    const shell = 0.72 + 0.22 * rng()
+    // enforce min shell radius ~0.5 so nodes never collide with central orb
+    const shell = 0.5 + 0.44 * rng()
     const ax = Math.cos(th) * rr * shell, ay = y * shell, az = Math.sin(th) * rr * shell
     const list = byCluster.get(ck)
     const spread = 0.13 + 0.055 * Math.log2(1 + list.length)
-    for (const n of list) {
+    // per-cluster drift speed (deterministic from cluster name hash)
+    const driftSpeed = ((_gHash(ck) % 997) / 997) * 0.003 + 0.001
+    for (let ni = 0; ni < list.length; ni++) {
+      const n = list[ni]
       const nr = _gRng(_gHash(n.id))
       const g = () => (nr() + nr() + nr()) / 1.5 - 1 // cheap gaussian-ish
       const ageDays = n.ts ? (nowSec - n.ts) / 86400 : 999
@@ -2961,9 +2984,12 @@ function buildGalaxy(nodes, nowSec) {
       out.push({
         n,
         pos: [ax + g() * spread, ay + g() * spread * 0.8, az + g() * spread],
+        anchor: [ax, ay, az],
+        driftSpeed,
         size: base + fresh * (n.source === 'service' ? 0.6 : 1.8),
         alpha: n.color_key === 'task_done' ? 0.5 : 0.65 + fresh * 0.35,
         fresh,
+        isAnchor: ni === 0,
       })
     }
   })
@@ -3010,12 +3036,25 @@ function MemoryGalaxy() {
       const cy_ = Math.cos(c.yaw), sy_ = Math.sin(c.yaw), cx_ = Math.cos(c.pitch), sx_ = Math.sin(c.pitch)
       const FOV = 2.4
       const P = [] // projected: [x, y, scale]
+      const anchorP = new Map() // cluster -> [projX, projY] for energy lines
       for (const m of model) {
-        const [x, y, z] = m.pos
-        const x1 = x * cy_ + z * sy_, z1 = -x * sy_ + z * cy_
-        const y2 = y * cx_ - z1 * sx_, z2 = y * sx_ + z1 * cx_
+        // per-node orbital drift: slow yaw around Y axis, deterministic from cluster
+        const driftAngle = m.driftSpeed * t
+        const dca = Math.cos(driftAngle), dsa = Math.sin(driftAngle)
+        const [ax, ay, az] = m.anchor
+        const rx = ax * dca + az * dsa, rz = -ax * dsa + az * dca
+        const dx = m.pos[0] - ax, dy = m.pos[1] - ay, dz = m.pos[2] - az
+        const fx = rx + dx, fy = ay + dy, fz = rz + dz
+        const x1 = fx * cy_ + fz * sy_, z1 = -fx * sy_ + fz * cy_
+        const y2 = fy * cx_ - z1 * sx_, z2 = fy * sx_ + z1 * cx_
         const s = FOV / (FOV + z2)
         P.push([cx + x1 * s * R, cy + y2 * s * R, s])
+        if (m.isAnchor) {
+          const ax1 = rx * cy_ + rz * sy_, az1 = -rx * sy_ + rz * cy_
+          const ay2 = ay * cx_ - az1 * sx_, az2 = ay * sx_ + az1 * cx_
+          const as = FOV / (FOV + az2)
+          anchorP.set(m.n.cluster, [cx + ax1 * as * R, cy + ay2 * as * R])
+        }
       }
       // cluster gravity links (anchor is the cluster centroid — reuse first node's dir)
       ctx.lineWidth = 1
@@ -3026,6 +3065,46 @@ function MemoryGalaxy() {
         ctx.setLineDash([4, 4])
         ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(P[si][0], P[si][1]); ctx.stroke()
         ctx.setLineDash([])
+      }
+      // --- orb-galaxy energy lines (state-reactive) ---
+      const orbSt = OrbBus.state
+      const orbLvl = OrbBus.level()
+      if (anchorP.size > 0) {
+        if (orbSt === 'thinking' || orbSt === 'working') {
+          // pulsing violet data-flow lines from orb center to cluster anchors
+          let ai = 0
+          for (const [, [ax, ay]] of anchorP) {
+            const phase = (t * 2 + ai * 0.7) % (Math.PI * 2)
+            const alpha = 0.15 + 0.25 * (Math.sin(phase) * 0.5 + 0.5)
+            ctx.lineWidth = 1.2
+            ctx.strokeStyle = `rgba(168,85,247,${alpha.toFixed(3)})`
+            ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(ax, ay); ctx.stroke()
+            ai++
+          }
+        } else if (orbSt === 'speaking') {
+          // speech: outward pulse from orb along anchor rays
+          let ai = 0
+          for (const [, [ax, ay]] of anchorP) {
+            const dx = ax - cx, dy = ay - cy
+            const phase = (t * 3 + ai * 0.9) % 1
+            const pulse = Math.sin(phase * Math.PI * 2) * 0.5 + 0.5
+            const alpha = 0.08 + pulse * 0.35 * orbLvl
+            ctx.lineWidth = 1 + pulse * 1.5
+            ctx.strokeStyle = `rgba(168,85,247,${alpha.toFixed(3)})`
+            ctx.beginPath()
+            ctx.moveTo(cx + dx * (1 - pulse * 0.15), cy + dy * (1 - pulse * 0.15))
+            ctx.lineTo(ax, ay)
+            ctx.stroke()
+            ai++
+          }
+        } else if (orbSt === 'idle') {
+          // faint static connections
+          ctx.lineWidth = 0.5
+          for (const [, [ax, ay]] of anchorP) {
+            ctx.strokeStyle = `rgba(90,100,120,0.06)`
+            ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(ax, ay); ctx.stroke()
+          }
+        }
       }
       // points: halo pass then core pass
       for (let i = 0; i < model.length; i++) {
@@ -3129,17 +3208,62 @@ function MemoryGalaxy() {
     ] })
 }
 
+// ------------------------------------------------------------ neural core (merged orb + galaxy center stage)
+
+function NeuralCore({ onOpenSpotlight }) {
+  const [spotOpen, setSpotOpen] = useState(false)
+  const [state, setState] = useState(OrbBus.state)
+  useEffect(() => OrbBus.subscribe(setState), [])
+  return jsxs('div', {
+    style: { position: 'relative', width: '100%', height: '100%', minHeight: 380 },
+    children: [
+      jsx(MemoryGalaxy, {}),
+      // Orb overlaid dead-center with circular fade vignette
+      jsx('div', {
+        style: {
+          position: 'absolute', left: '50%', top: '50%',
+          transform: 'translate(-50%, -50%)',
+          zIndex: 10,
+          pointerEvents: 'none',
+          width: 200,
+          height: 200,
+        },
+        children: [
+          // Subtle circular fade mask
+          jsx('div', {
+            style: {
+              position: 'absolute', inset: 0, borderRadius: '50%',
+              background: 'radial-gradient(circle, transparent 45%, rgba(0,0,0,0.35) 100%)',
+              pointerEvents: 'none', zIndex: 2,
+            }
+          }),
+          jsx('div', {
+            style: {
+              position: 'absolute', left: '50%', top: '50%',
+              transform: 'translate(-50%, -50%)',
+              pointerEvents: 'auto', cursor: 'pointer',
+            },
+            onClick: () => { haptic('tap'); onOpenSpotlight() },
+            title: 'Click to open command runner (Ctrl+J)',
+            children: jsx(Orb3D, { size: 200, onClick: () => { haptic('tap'); onOpenSpotlight() }, ariaLabel: ORB_LABELS[state] || 'Neural core' })
+          })
+        ]
+      })
+    ]
+  })
+}
+
 // ------------------------------------------------------------ customizable widget grid
 
 const WIDGETS = {
-  hero:    { title: 'Jarvis',        span: 12, rows: 3, render: p => jsx(HeroWidget, p) },
-  advisor: { title: 'Advisor',       span: 6,  rows: 4, render: () => jsx(AdvisorCard, {}) },
+  hero:    { title: 'Jarvis',        span: 12, rows: 1, render: p => jsx(HeroWidget, p) },
+  advisor: { title: 'Advisor',       span: 4,  rows: 5, render: () => jsx(AdvisorCard, {}) },
   todos:   { title: 'Today',         span: 6,  rows: 4, render: () => jsx(TodosCard, {}) },
   brief:   { title: 'Brief',         span: 8,  rows: 4, render: () => jsx(BriefCard, {}) },
   status:  { title: 'Status',        span: 4,  rows: 5, render: () => jsx(StatusCard, {}) },
   metrics: { title: 'Metrics',       span: 4,  rows: 4, render: () => jsx(MetricsCard, {}) },
   quotes:  { title: 'Tickers',       span: 8,  rows: 4, render: () => jsx(QuotesCard, {}) },
-  galaxy:  { title: 'Memory galaxy', span: 8, rows: 5, render: () => jsx(AoCard, { label: 'memory galaxy', delay: 150, children: jsx(MemoryGalaxy, {}) }) },
+  galaxy:  { title: 'Neural core',   span: 8,  rows: 5, render: p => jsx(NeuralCore, p) },
   console: { title: 'Console',       span: 12, rows: 3, render: () => jsx(AoCard, { label: 'console', delay: 300, children: jsx(ConsoleCard, {}) }) },
   orbit:   { title: 'System orbit',  span: 12, rows: 4, render: () => jsx(OrbitCard, {}) },
   agents:  { title: 'Agent activity', span: 6, rows: 4, render: () => jsx(AgentsCard, {}) },
@@ -3335,10 +3459,14 @@ function AgentosPage() {
   ]
   const tabIndex = tabs.findIndex(t => t[0] === tab)
 
-  // Accent theme override (cyan/amber/emerald/crimson) — persisted, page-scoped.
+  // Accent theme override + semantic color tokens
   useEffect(() => {
     const root = document.documentElement
     if (accent && AO_THEMES[accent]) root.style.setProperty('--ui-accent', AO_THEMES[accent])
+    root.style.setProperty('--st-nominal', '#5cd6ff')
+    root.style.setProperty('--st-degraded', '#ffb84d')
+    root.style.setProperty('--st-alert', '#f5495b')
+    root.style.setProperty('--st-active', '#a855f7')
     return () => { root.style.removeProperty('--ui-accent') }
   }, [accent])
 
