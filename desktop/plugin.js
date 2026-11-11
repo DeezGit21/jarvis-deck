@@ -124,6 +124,18 @@ const CSS = `
   max-height: 5.4rem; overflow-y: auto; white-space: pre-wrap; word-break: break-all; color: #5cd6ff; }
 .ao-mini-term::-webkit-scrollbar { width: 4px; }
 .ao-mini-term::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ui-accent) 20%, transparent); border-radius: 2px; }
+.ao-svc-drawer { position: fixed; right: 0; top: 0; bottom: 0; width: 380px; max-width: 90vw; z-index: 900;
+  background: color-mix(in srgb, var(--ui-card) 90%, transparent);
+  backdrop-filter: blur(18px); border-left: 1px solid var(--ui-stroke-secondary);
+  box-shadow: -8px 0 40px rgba(0,0,0,.45);
+  display: flex; flex-direction: column;
+  transform: translateX(100%); transition: transform .25s cubic-bezier(.23,1,.32,1); }
+.ao-svc-drawer[data-open='1'] { transform: translateX(0); }
+.ao-svc-drawer-header { display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid var(--ui-stroke-secondary); }
+.ao-svc-drawer-body { flex: 1; overflow-y: auto; padding: 10px 16px; }
+.ao-svc-drawer-body::-webkit-scrollbar { width: 6px; }
+.ao-svc-drawer-body::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ui-accent) 20%, transparent); border-radius: 3px; }
 
 /* --- spotlight command runner --- */
 .ao-spot-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: flex-start;
@@ -1720,6 +1732,8 @@ function TodosCard() {
           jsxs('div', {
             className: 'ao-in flex items-baseline gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
             style: { animationDelay: 120 + i * 70 + 'ms' },
+            onMouseEnter: () => HoverBus.set((t.text || '').toLowerCase()),
+            onMouseLeave: () => HoverBus.clear(),
             children: [
               jsx('span', {
                 className: cn('shrink-0 rounded border px-1.5 py-0.5 text-[0.65rem] uppercase tracking-wider',
@@ -1749,6 +1763,8 @@ function TodosCard() {
     return jsxs('div', {
             className: 'ao-in flex items-baseline gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
             style: { animationDelay: 240 + i * 70 + 'ms' },
+            onMouseEnter: () => HoverBus.set((t.title || '').toLowerCase()),
+            onMouseLeave: () => HoverBus.clear(),
             children: [
               jsx('span', {
                 className: 'shrink-0 rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 text-[0.65rem] uppercase tracking-wider text-(--ui-text-tertiary)',
@@ -1837,6 +1853,8 @@ function ActionRow({ a, busy, onDone, onKill }) {
   }
   return jsxs('div', {
     className: 'flex items-start gap-2 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) p-2',
+    onMouseEnter: () => HoverBus.set((a.text || '').toLowerCase()),
+    onMouseLeave: () => HoverBus.clear(),
     children: [
       jsx('span', { className: 'mt-0.5 shrink-0 rounded border px-1.5 py-0.5 font-mono text-[0.65rem] font-bold ' + tier.cls, children: tier.label }),
       jsx('div', { className: 'min-w-0 flex-1', children: [
@@ -1944,6 +1962,8 @@ function AdvisorCard() {
         jsx('div', { className: 'flex flex-col gap-1.5', children: loopRows.map(r => jsxs('div', {
           className: 'flex items-start gap-2 rounded-md border px-2 py-1.5 ' +
             (r.escalated ? 'border-[#d29922]/50 bg-[#d2992211]' : 'border-(--ui-stroke-secondary)'),
+          onMouseEnter: () => HoverBus.set((r.text || '').toLowerCase()),
+          onMouseLeave: () => HoverBus.clear(),
           children: [
             jsx('span', {
               className: 'shrink-0 font-mono text-[0.65rem] ' + (r.escalated ? 'text-[#d29922]' : 'text-(--ui-text-tertiary)'),
@@ -2808,7 +2828,7 @@ function Spotlight({ open, onClose }) {
 
 // ------------------------------------------------------------ hero (compact status ribbon)
 
-function HeroWidget({ onOpenSpotlight }) {
+function HeroWidget({ onOpenSpotlight, onOpenServices }) {
   const [state, setState] = useState(OrbBus.state)
   useEffect(() => OrbBus.subscribe(setState), [])
   const now = useNow()
@@ -2822,11 +2842,19 @@ function HeroWidget({ onOpenSpotlight }) {
     queryFn: () => REST('/todos'),
     refetchInterval: 120000
   })
+  const metricsQ = useQuery({
+    queryKey: ['agentos', 'metrics'],
+    queryFn: () => REST('/metrics'),
+    refetchInterval: 120000
+  })
   const svcs = (statusQ.data && statusQ.data.services) || []
   const up = svcs.filter(s => s.up === true).length
   const down = svcs.filter(s => s.up === false).length
   const open = (todosQ.data && todosQ.data.total_open) || 0
   const word = { idle: 'Standing by', listening: 'Listening…', thinking: 'Processing…', speaking: 'Speaking', working: 'Working…' }[state]
+  const metrics = metricsQ.data
+  // Build revenue series for sparkline from metrics data if available
+  const revSeries = metrics && metrics.revenue_series ? metrics.revenue_series : null
 
   // Mood computation for OrbBus (cheap: from already-fetched data)
   useEffect(() => {
@@ -2846,14 +2874,40 @@ function HeroWidget({ onOpenSpotlight }) {
           style: { color: ORB_STATE_COLORS[state] },
           children: word
         }),
-        svcs.length > 0 && jsxs('span', { className: 'font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: [
-          'SVC ',
-          jsx('span', { style: { color: down > 0 ? '#f5495b' : '#3fb950' }, children: up + '/' + svcs.length })
-        ] }),
+        svcs.length > 0 && jsxs('button', {
+          type: 'button',
+          onClick: onOpenServices,
+          title: 'Service health — click for details',
+          className: 'flex items-center gap-1.5 font-mono text-[0.6rem] text-(--ui-text-quaternary) transition-colors hover:text-(--ui-accent)',
+          children: [
+            'SVC ',
+            jsx('span', { style: { color: down > 0 ? '#f5495b' : '#3fb950' }, children: up + '/' + svcs.length }),
+            // micro-LED strip: 6px dots per service
+            jsx('span', { className: 'flex items-center gap-[3px] ml-1', children: svcs.slice(0, 30).map(s =>
+              jsx('span', {
+                className: 'inline-block rounded-full',
+                style: {
+                  width: 6, height: 6,
+                  background: s.up === false ? '#f5495b' : s.up === true ? '#3fb950' : '#d29922',
+                  boxShadow: s.up === false ? '0 0 6px #f5495b' : 'none',
+                  animation: s.up === false ? 'aoPulse 1.5s ease-in-out infinite' : 'none'
+                }
+              }, s.name)
+            )})
+          ]
+        }),
         jsx('span', { className: 'font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: open + ' open' }),
         jsx('span', { className: 'font-mono text-[0.6rem] text-(--ui-text-quaternary)', children:
           now.toLocaleTimeString('en-US', { hour12: false })
-        })
+        }),
+        // faint area sparkline behind MTD revenue (falls back to a plain figure
+        // when the series isn't available from the backend)
+        revSeries && revSeries.length >= 2 ? jsx('span', { className: 'relative inline-flex items-center', style: { width: 48, height: 20 },
+          children: [
+            jsx(Spark, { data: revSeries, up: true, w: 48, h: 20 }),
+            jsx('span', { className: 'absolute inset-0 flex items-center justify-center font-mono text-[0.55rem] text-(--ui-text-quaternary)', children: jsx(AnimNum, { value: metrics ? metrics.revenue_mtd : 0, prefix: '$', duration: 600 }) })
+          ]
+        }) : metrics && jsx('span', { className: 'font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: 'MTD ' + fmtMoney(metrics.revenue_mtd) })
       ] }),
       // right side: protocol buttons
       jsxs('div', { className: 'flex items-center gap-1.5 ml-auto', children: [
@@ -2901,6 +2955,69 @@ function fmtAgo(isoOrMs) {
   if (h < 48) return h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '') + ' ago'
   return Math.floor(h / 24) + 'd ago'
 }
+
+// ------------------------------------------------------------ service health drawer
+
+function ServiceDrawer({ svcs, open, onClose }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return undefined
+    function onKey(e) { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+  return jsxs('div', {
+    ref,
+    className: 'ao-svc-drawer',
+    'data-open': open ? '1' : '0',
+    'aria-label': 'Service health drawer',
+    role: 'dialog',
+    children: [
+      jsxs('div', { className: 'ao-svc-drawer-header', children: [
+        jsx('span', { className: 'text-sm font-semibold text-(--ui-text-primary)', children: 'services' }),
+        jsx('button', {
+          type: 'button', onClick: onClose,
+          className: 'text-xs text-(--ui-text-tertiary) hover:text-(--ui-accent)',
+          'aria-label': 'Close services drawer',
+          children: '\u2715'
+        })
+      ] }),
+      jsx('div', { className: 'ao-svc-drawer-body', children: svcs.length === 0
+        ? jsx('div', { className: 'text-xs text-(--ui-text-tertiary) py-4 text-center', children: 'No service data.' })
+        : jsx('div', { className: 'flex flex-col gap-2', children: svcs.map(s =>
+          jsxs('div', {
+            className: 'flex items-center gap-2 rounded-md px-2 py-2 text-sm border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background)',
+            children: [
+              jsx('span', { className: 'shrink-0', children: jsx(Led, { up: s.up }) }),
+              jsxs('div', { className: 'min-w-0 flex-1', children: [
+                jsx('div', { className: 'text-(--ui-text-secondary) truncate', children: s.name }),
+                jsxs('div', { className: 'flex items-center gap-2 text-[0.65rem] text-(--ui-text-quaternary)', children: [
+                  s.updated && jsx('span', { children: s.updated }),
+                  s.ms != null && jsx('span', { children: s.ms + 'ms' }),
+                  s.up === false && s.detail && jsx('span', { className: 'truncate max-w-[120px]', children: s.detail })
+                ] })
+              ] }),
+              jsx('button', {
+                type: 'button',
+                className: 'ao-btn text-[0.6rem]',
+                'data-kind': 'restart',
+                onClick: () => ConsoleStore.send('restart service ' + s.name),
+                title: 'Restart ' + s.name,
+                children: 'RESTART'
+              })
+            ]
+          }, s.name)
+        ) })
+      })
+    ]
+  })
+}
+
+// ------------------------------------------------------------ hover-linking bus
+const HoverBus = { topic: null, _subs: new Set(), subscribe(fn) { this._subs.add(fn); return () => this._subs.delete(fn) },
+  set(t) { this.topic = t; for (const fn of this._subs) { try { fn(t) } catch {} } },
+  clear() { this.set(null) } }
+if (typeof window !== 'undefined') window.__deckHover = HoverBus
 
 const RUN_TONE = {
   completed: '#3fb950', success: '#3fb950', ok: '#3fb950',
@@ -3104,6 +3221,11 @@ function MemoryGalaxy() {
       const FOV = 2.4
       const P = [] // projected: [x, y, scale]
       const anchorP = new Map() // cluster -> [projX, projY] for energy lines
+      const dims = new Float32Array(model.length).fill(1) // eased hover-dim state
+      // Read hover bus for galaxy linking — token-based so "run wirepro
+      // diagram pass" matches a node labeled "WirePro diagram-accuracy pass".
+      const hoverTopic = HoverBus.topic
+      const hoverTokens = hoverTopic ? String(hoverTopic).split(/\s+/).filter(w => w.length >= 4) : []
       for (const m of model) {
         // per-node orbital drift: slow yaw around Y axis, deterministic from cluster
         const driftAngle = m.driftSpeed * t
@@ -3179,8 +3301,17 @@ function MemoryGalaxy() {
         const rgb = m.n.color_key === 'task_open' ? accent : (GALAXY_RGB[m.n.color_key] || [160, 170, 185])
         const selI = i === si
         const hovI = i === ptr.current.hov
-        const r = m.size * (1.1 + 0.6 * s) * (selI ? 1.7 : hovI ? 1.35 : 1)
-        const a = m.alpha * (selI ? 1 : hovI ? 1.2 : 1)
+        // Hover-linking: any >=4-char token from the hovered item title that
+        // appears in the node's label or cluster lights that node up.
+        const linkMatch = hoverTokens.length > 0 &&
+          hoverTokens.some(w => ((m.n.label || '') + ' ' + (m.n.cluster || '')).toLowerCase().includes(w))
+        const hoverTarget = hoverTokens.length > 0 && !linkMatch ? 0.15 : 1
+        // ease each node's dim toward its target (~200ms at 60fps) instead of snapping
+        const dimCur = dims[i] === undefined ? 1 : dims[i]
+        const dimEased = Math.abs(dimCur - hoverTarget) < 0.01 ? hoverTarget : dimCur + (hoverTarget - dimCur) * 0.2
+        dims[i] = dimEased
+        const r = m.size * (1.1 + 0.6 * s) * (selI ? 1.7 : hovI ? 1.35 : linkMatch ? 1.25 : 1)
+        const a = m.alpha * (selI ? 1 : hovI ? 1.2 : 1) * dimEased
         ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${(a * 0.16).toFixed(3)})`
         ctx.beginPath(); ctx.arc(px, py, r * 3.2, 0, 6.2832); ctx.fill()
         ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${Math.min(1, a).toFixed(3)})`
@@ -3371,7 +3502,7 @@ function loadLayout() {
   return { order: DEFAULT_ORDER.slice(), hidden: [], sizes: defaultSizes() }
 }
 
-function WidgetGrid({ customize, dockPinned, onOpenSpotlight }) {
+function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) {
   const [layout, setLayout] = useState(loadLayout)
   const layoutRef = useRef(layout)
   layoutRef.current = layout
@@ -3491,7 +3622,7 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight }) {
             onPointerDown: e => startResize(e, id),
             children: '⤡'
           }),
-          jsx(WidgetBoundary, { children: w.render({ onOpenSpotlight }) })
+          jsx(WidgetBoundary, { children: w.render({ onOpenSpotlight, onOpenServices }) })
         ]
       }, id + (isOver ? ':over' : ''))
     }),
@@ -3516,8 +3647,15 @@ function AgentosPage() {
   const [customize, setCustomize] = useState(false)
   const [dockPinned, setDockPinned] = useLocal('agentos-dock', false)
   const [spotOpen, setSpotOpen] = useState(false)
+  const [svcOpen, setSvcOpen] = useState(false)
   const [, force] = useState(0)
   useEffect(() => ConsoleStore.subscribe(() => force(v => v + 1)), [])
+  const svcQ = useQuery({
+    queryKey: ['agentos', 'status'],
+    queryFn: () => REST('/status'),
+    refetchInterval: 120000
+  })
+  const svcs = (svcQ.data && svcQ.data.services) || []
   const tabs = [
     ['overview', 'Overview'],
     ['vision', 'Vision'],
@@ -3647,7 +3785,7 @@ function AgentosPage() {
       jsx('div', { key: tab, className: 'relative z-10 ao-in flex flex-col gap-3', children: [
         tab === 'overview' && jsxs('div', { className: 'flex gap-3', children: [
           jsxs('div', { className: 'min-w-0 flex-1', children: [
-            jsx(WidgetGrid, { customize, dockPinned, onOpenSpotlight: () => setSpotOpen(true) })
+            jsx(WidgetGrid, { customize, dockPinned, onOpenSpotlight: () => setSpotOpen(true), onOpenServices: () => setSvcOpen(true) })
           ] }),
           dockPinned && jsx('div', { className: 'ao-dock shrink-0', children:
             jsx(WidgetBoundary, { children:
@@ -3672,7 +3810,8 @@ function AgentosPage() {
           jsx(WidgetBoundary, { children: jsx(ExportCard, {}) })
         ] })
       ] }),
-      jsx(Spotlight, { open: spotOpen, onClose: () => setSpotOpen(false) })
+      jsx(Spotlight, { open: spotOpen, onClose: () => setSpotOpen(false) }),
+      jsx(ServiceDrawer, { svcs, open: svcOpen, onClose: () => setSvcOpen(false) })
     ]
   })
 }
