@@ -3986,6 +3986,37 @@ function SettingsSection() {
     } finally { setConnBusy(null) }
   }
 
+  async function deleteKey(name) {
+    if (keyBusy) return
+    setKeyBusy(name)
+    setKeyMsg(null)
+    try {
+      await REST('/settings/keys', { method: 'DELETE', body: { name } })
+      setKeyMsg(name + ' removed from .env')
+      await qc.invalidateQueries({ queryKey: ['agentos', 'settings'] })
+    } catch (e) {
+      setKeyMsg(name + ': ' + String(e && e.message || e).slice(0, 140))
+    } finally { setKeyBusy(null) }
+  }
+
+  const [customName, setCustomName] = useState('')
+  const [customVal, setCustomVal] = useState('')
+  async function addCustomKey() {
+    const name = customName.trim().toUpperCase()
+    const value = customVal.trim()
+    if (!name || !value || keyBusy) return
+    setKeyBusy('__custom')
+    setKeyMsg(null)
+    try {
+      await REST('/settings/keys', { method: 'POST', body: { name, value } })
+      setCustomName(''); setCustomVal('')
+      setKeyMsg(name + ' saved to ~/.hermes/agentos/.env')
+      await qc.invalidateQueries({ queryKey: ['agentos', 'settings'] })
+    } catch (e) {
+      setKeyMsg(name + ': ' + String(e && e.message || e).slice(0, 140))
+    } finally { setKeyBusy(null) }
+  }
+
   const hosted = (cq.data && cq.data.hosted) || []
   const mcps = (cq.data && cq.data.mcps) || []
   const pct = v => Math.round(v * 100) + '%'
@@ -4093,11 +4124,40 @@ function SettingsSection() {
               disabled: !keyDrafts[name] || keyBusy === name,
               onClick: () => saveKey(name),
               children: keyBusy === name ? '…' : 'Save'
+            }),
+            info.set && jsx('button', {
+              type: 'button', className: 'ao-wbtn', title: 'Remove from .env',
+              'aria-label': 'Remove ' + name,
+              onClick: () => deleteKey(name), children: '✕'
             })
           ] }, name)
         ),
+        // custom key row — any integration this user's stack needs
+        jsxs('div', { className: 'flex flex-wrap items-center gap-2 rounded-md border border-dashed border-(--ui-stroke-secondary) px-1 py-1.5', children: [
+          jsx('span', { className: 'ao-led', style: { color: 'var(--ui-text-quaternary)', animation: 'none' } }),
+          jsx('input', {
+            value: customName,
+            onChange: e => setCustomName(e.target.value.replace(/[^a-zA-Z0-9_]/g, '_').toUpperCase()),
+            onKeyDown: e => { if (e.key === 'Enter') addCustomKey() },
+            placeholder: 'CUSTOM_KEY_NAME', autoComplete: 'off', spellCheck: false,
+            className: 'w-44 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) px-2 py-1 font-mono text-xs text-(--ui-text-primary) outline-none placeholder:text-(--ui-text-quaternary) focus:border-(--ui-accent)'
+          }),
+          jsx('input', {
+            type: 'password', value: customVal,
+            onChange: e => setCustomVal(e.target.value),
+            onKeyDown: e => { if (e.key === 'Enter') addCustomKey() },
+            placeholder: 'value…', autoComplete: 'off', spellCheck: false,
+            className: 'w-44 flex-1 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) px-2 py-1 font-mono text-xs text-(--ui-text-primary) outline-none placeholder:text-(--ui-text-quaternary) focus:border-(--ui-accent)'
+          }),
+          jsx('button', {
+            type: 'button', className: 'ao-btn',
+            disabled: !customName.trim() || !customVal.trim() || keyBusy === '__custom',
+            onClick: addCustomKey,
+            children: keyBusy === '__custom' ? '…' : 'Add'
+          })
+        ] }),
         jsx('div', { className: 'text-[0.68rem] text-(--ui-text-quaternary)', children:
-          'Passwords (Webull) stay out of this panel — edit ~/.hermes/agentos/.env directly.' }),
+          'Values are write-only — the panel shows whether a key is set, never its contents. Login passwords belong in ~/.hermes/agentos/.env, not here.' }),
         keyMsg && jsx('div', { className: 'font-mono text-[0.68rem] text-(--ui-accent)', children: keyMsg })
       ] })
     }),

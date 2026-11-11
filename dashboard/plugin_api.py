@@ -2179,16 +2179,25 @@ _SETTINGS_DEFAULTS = {
     "tts_voice": "",  # "" = use agentos.yaml voice
 }
 
-# .env keys the settings panel may read (presence only) or write. Passwords are
-# deliberately excluded — credentials never flow through chat or the deck UI.
+# .env keys the settings panel offers out of the box — a generic catalog any
+# user can wire, NOT an instance-specific list. Anything else can still be
+# added by name (custom key row); the only hard rule is valid env-var syntax.
+# Values are write-only: the panel shows presence (set/missing), never contents.
 _SETTINGS_KEYS = {
-    "GEMINI_API_KEY": "Gemini — vision, broadcast script, TTS",
-    "STRIPE_SECRET_KEY": "Stripe — balance & payouts",
-    "PLAID_CLIENT_ID": "Plaid — banks (client id)",
-    "PLAID_SECRET": "Plaid — banks (secret)",
-    "PLANNER_FIREBASE_KEY": "ADHD Planner — absolute path to the service-account JSON",
-    "WEBULL_USERNAME": "Webull login (username or email)",
+    "GEMINI_API_KEY": "Google Gemini — AI features",
+    "OPENAI_API_KEY": "OpenAI",
+    "ANTHROPIC_API_KEY": "Anthropic",
+    "OPENROUTER_API_KEY": "OpenRouter",
+    "STRIPE_SECRET_KEY": "Stripe — payments",
+    "TWILIO_AUTH_TOKEN": "Twilio — SMS/voice",
+    "SENDGRID_API_KEY": "SendGrid — email",
+    "ALPACA_API_KEY": "Alpaca — trading (key id)",
+    "ALPACA_SECRET_KEY": "Alpaca — trading (secret)",
+    "PLAID_CLIENT_ID": "Plaid — banking (client id)",
+    "PLAID_SECRET": "Plaid — banking (secret)",
 }
+
+_ENV_NAME_RE = _re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
 
 
 def _load_settings() -> dict:
@@ -2204,11 +2213,16 @@ def _load_settings() -> dict:
 @router.get("/settings")
 def settings_get():
     env = _read_env()
+    keys = {name: {"set": bool(env.get(name)), "hint": hint}
+            for name, hint in _SETTINGS_KEYS.items()}
+    # keys the user added beyond the catalog show up as custom entries
+    for k in sorted(env):
+        if k not in keys and _ENV_NAME_RE.match(k):
+            keys[k] = {"set": True, "hint": "custom key"}
     return {
         "date": _local_date(),
         "settings": _load_settings(),
-        "keys": {name: {"set": bool(env.get(name)), "hint": hint}
-                 for name, hint in _SETTINGS_KEYS.items()},
+        "keys": keys,
     }
 
 
@@ -2228,13 +2242,36 @@ def settings_set(body: dict = Body(...)):
 
 @router.post("/settings/keys")
 def settings_set_key(body: dict = Body(...)):
-    """Write one whitelisted API key into ~/.hermes/agentos/.env (upsert)."""
-    name = str(body.get("name") or "").strip()
+    """Upsert one API key into ~/.hermes/agentos/.env.
+
+    Catalog names (see GET /settings) plus ANY valid ENV_VAR name — the deck is
+    a product, so users wire whatever their own stack needs.
+    """
+    name = str(body.get("name") or "").strip().upper()
     value = str(body.get("value") or "").strip()
-    if name not in _SETTINGS_KEYS:
-        raise HTTPException(status_code=400, detail="unsupported key name")
+    if not _ENV_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="key name must be UPPER_SNAKE (3-64 chars, starts with a letter)")
     if not value:
         raise HTTPException(status_code=400, detail="value required")
+    _write_env_key(name, value)
+    return {"ok": True, "name": name, "set": True}
+
+
+@router.delete("/settings/keys")
+def settings_delete_key(body: dict = Body(...)):
+    name = str(body.get("name") or "").strip().upper()
+    if not _ENV_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="invalid key name")
+    lines = ENV_FILE.read_text(encoding="utf-8").splitlines() if ENV_FILE.exists() else []
+    kept = [ln for ln in lines if ln.split("=", 1)[0].strip() != name]
+    if len(kept) == len(lines):
+        raise HTTPException(status_code=404, detail="key not present in .env")
+    AGENTOS.mkdir(parents=True, exist_ok=True)
+    ENV_FILE.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    return {"ok": True, "name": name, "removed": True}
+
+
+def _write_env_key(name: str, value: str) -> None:
     lines = ENV_FILE.read_text(encoding="utf-8").splitlines() if ENV_FILE.exists() else []
     out, replaced = [], False
     for line in lines:
@@ -2247,4 +2284,3 @@ def settings_set_key(body: dict = Body(...)):
         out.append(f"{name}={value}")
     AGENTOS.mkdir(parents=True, exist_ok=True)
     ENV_FILE.write_text("\n".join(out) + "\n", encoding="utf-8")
-    return {"ok": True, "name": name, "set": True}
