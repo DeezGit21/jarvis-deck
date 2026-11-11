@@ -1247,6 +1247,37 @@ def money_summary():
     return out
 
 
+# ------------------------------------------------- money self-healing (webull)
+# The webull session needs an interactive MFA code only D can type, so "fixing
+# it automatically" means: open the login console on his desktop + ping Telegram.
+WEBULL_LOGIN_FLAG = CACHE / "webull-login-launched.json"
+
+
+def _launch_webull_login() -> dict:
+    script = AGENTOS / "scripts" / "webull_login.py"
+    if not script.exists():
+        return {"launched": False, "detail": "webull_login.py not installed"}
+    if not MONEY_VENV_PY.exists():
+        return {"launched": False, "detail": "agentos venv missing"}
+    CREATE_NEW_CONSOLE = 0x00000010
+    try:
+        subprocess.Popen(
+            [str(MONEY_VENV_PY), str(script)],
+            creationflags=CREATE_NEW_CONSOLE,
+            cwd=str(AGENTOS),
+        )
+    except OSError as e:
+        return {"launched": False, "detail": str(e)[:200]}
+    WEBULL_LOGIN_FLAG.write_text(json.dumps({"ts": time.time()}), encoding="utf-8")
+    return {"launched": True,
+            "detail": "Login window opened — type the MFA code there; positions refresh on the next poll."}
+
+
+@router.post("/money/webull/login")
+def money_webull_login():
+    return _launch_webull_login()
+
+
 # ------------------------------------------------------- planner (ADHD Planner app)
 
 @router.get("/planner/today")
@@ -1956,6 +1987,32 @@ def _remediation_scan(manual: bool = False) -> dict:
             state["pending"].append(pend)
             actions.append({"service": name, "result": "pending_approval"})
             _tg_notify("⚠️ " + name + " is down and awaiting your approval to fix. Open the deck → // AUTOMATION.")
+    # money connectors: read today's cached snapshots (cheap, no live calls).
+    # reauth_needed = session expired → open the login console once, then stop
+    # nagging (the MFA step is D's; the flag prevents relaunch loops).
+    try:
+        wsnap = CACHE / ("money-stocks-" + _local_date() + ".json")
+        launched_recently = False
+        if WEBULL_LOGIN_FLAG.exists():
+            try:
+                _flag = json.loads(WEBULL_LOGIN_FLAG.read_text(encoding="utf-8"))
+                launched_recently = now - float(_flag.get("ts") or 0) < 6 * 3600
+            except Exception:  # noqa: BLE001
+                launched_recently = False
+        if wsnap.exists() and not launched_recently:
+            wdata = json.loads(wsnap.read_text(encoding="utf-8"))
+            if wdata.get("state") == "reauth_needed" and len(auto_last_hour) < max_hour:
+                res = _launch_webull_login()
+                kind = "auto_fixed" if res.get("launched") else "auto_failed"
+                _rem_event(state, kind, "webull-session",
+                           res.get("detail") or "webull login console opened")
+                auto_last_hour.append({"kind": kind, "ts_epoch": now})
+                actions.append({"service": "webull-session",
+                                "result": "login_launched" if res.get("launched") else "launch_failed"})
+                _tg_notify("📈 Webull session expired — I opened the login window on your desktop. "
+                           "Type the MFA code there; positions refresh right after.")
+    except Exception:  # noqa: BLE001 — the money scan must never break the service scan
+        pass
     if actions:
         _rem_save(state)
     return {"date": _local_date(), "actions": actions}
