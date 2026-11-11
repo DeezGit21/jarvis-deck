@@ -617,20 +617,25 @@ if (typeof window !== 'undefined') window.__orbBus = OrbBus
 const ConsoleStore = {
   msgs: [],        // { role: 'you' | 'jarvis', text }
   busy: false,
+  current: null,   // the command being executed right now (for the hero ribbon)
+  since: 0,        // Date.now() when the current command started
   _subs: new Set(),
   subscribe(fn) { this._subs.add(fn); return () => this._subs.delete(fn) },
   emit() { for (const fn of this._subs) { try { fn() } catch { /* ignore */ } } },
   add(m) { this.msgs = [...this.msgs, m]; this.emit() },
-  setBusy(b) { this.busy = b; this.emit() },
+  setBusy(b) { this.busy = b; if (!b) this.current = null; this.emit() },
   async send(text) {
     const query = (text || '').trim()
     if (!query || this.busy) return false
     this.add({ role: 'you', text: query })
+    this.current = query
+    this.since = Date.now()
     this.setBusy(true)
     OrbBus.set(query.startsWith('/') ? 'working' : 'thinking')
     try {
       const r = await REST('/command', { method: 'POST', body: { query } })
       this.add({ role: 'jarvis', text: r.reply })
+      this.lastDone = { cmd: query, secs: Math.max(1, Math.round((Date.now() - this.since) / 1000)), at: Date.now() }
       Chimes.play('down')
       const spoke = Tts.speak(r.reply)
       if (!spoke) OrbBus.set('idle')
@@ -2901,9 +2906,32 @@ function Spotlight({ open, onClose }) {
 
 // ------------------------------------------------------------ hero (compact status ribbon)
 
+function stopJarvisSpeech() {
+  Tts.stop()
+  if (OrbBus.state === 'speaking') OrbBus.set('idle')
+}
+
 function HeroWidget({ onOpenSpotlight, onOpenServices }) {
   const [state, setState] = useState(OrbBus.state)
   useEffect(() => OrbBus.subscribe(setState), [])
+  const [curCmd, setCurCmd] = useState(null)
+  const [doneFlash, setDoneFlash] = useState(null)
+  useEffect(() => {
+    const sync = () => {
+      setCurCmd(ConsoleStore.busy ? ConsoleStore.current : null)
+      const d = ConsoleStore.lastDone
+      if (d && Date.now() - d.at < 6000) setDoneFlash(d)
+    }
+    sync()
+    return ConsoleStore.subscribe(sync)
+  }, [])
+  // Esc stops voice playback while JARVIS is speaking
+  useEffect(() => {
+    if (state !== 'speaking') return
+    const onKey = e => { if (e.key === 'Escape') stopJarvisSpeech() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [state])
   const now = useNow()
   const statusQ = useQuery({
     queryKey: ['agentos', 'status'],
@@ -2925,6 +2953,7 @@ function HeroWidget({ onOpenSpotlight, onOpenServices }) {
   const down = svcs.filter(s => s.up === false).length
   const open = (todosQ.data && todosQ.data.total_open) || 0
   const word = { idle: 'Standing by', listening: 'Listening…', thinking: 'Processing…', speaking: 'Speaking', working: 'Working…' }[state]
+  const busySecs = curCmd ? Math.max(0, Math.round((Date.now() - (ConsoleStore.since || Date.now())) / 1000)) : 0
   const metrics = metricsQ.data
   // Build revenue series for sparkline from metrics data if available
   const revSeries = metrics && metrics.revenue_series ? metrics.revenue_series : null
@@ -2946,6 +2975,18 @@ function HeroWidget({ onOpenSpotlight, onOpenServices }) {
           className: 'text-sm font-semibold ao-hero-glow',
           style: { color: ORB_STATE_COLORS[state] },
           children: word
+        }),
+        // what JARVIS is actually running + live elapsed — no silent-violet voids
+        curCmd && jsx('span', {
+          className: 'font-mono text-[0.6rem] text-(--ui-text-tertiary) max-w-[420px] truncate',
+          title: curCmd,
+          children: '· ' + curCmd + ' · ' + busySecs + 's'
+        }),
+        // brief green "done in Ns" flash when a command completes
+        !curCmd && doneFlash && (Date.now() - doneFlash.at < 6000) && jsx('span', {
+          className: 'font-mono text-[0.6rem] text-[#3fb950] max-w-[420px] truncate',
+          title: doneFlash.cmd,
+          children: '✓ ' + doneFlash.cmd + ' · ' + doneFlash.secs + 's'
         }),
         svcs.length > 0 && jsxs('button', {
           type: 'button',
@@ -2984,6 +3025,13 @@ function HeroWidget({ onOpenSpotlight, onOpenServices }) {
       ] }),
       // right side: protocol buttons
       jsxs('div', { className: 'flex items-center gap-1.5 ml-auto', children: [
+        state === 'speaking' && jsx('button', {
+          type: 'button',
+          className: 'ao-runbtn border-(#f5495b)/50 text-(#f5495b)',
+          onClick: stopJarvisSpeech,
+          title: 'Stop voice playback (Esc also works)',
+          children: ['⏹', 'stop']
+        }),
         jsx('button', {
           type: 'button', className: 'ao-runbtn',
           onClick: () => { Chimes.play('up'); JarvisCtl.send('Generate my daily brief') },
