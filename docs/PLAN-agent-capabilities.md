@@ -1,5 +1,8 @@
 # PLAN — Agent Capabilities Build (Nov 2026)
 
+**STATUS: SHIPPED** — all three phases built, verified live, and committed
+(3c00e2e backend · 53504b1 cards · b121041 modes+omni-bar · 630cbbe companion).
+
 Goal: close the gap between "can do" and "does do". Three phases, one commit each.
 
 ## Phase 1 — Proactive auto-remediation (approval-gated self-healing)
