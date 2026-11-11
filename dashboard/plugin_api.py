@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -592,6 +593,10 @@ def command(body: dict = Body(...)):
         raise HTTPException(status_code=400, detail="query required")
     if len(query) > 8000:
         raise HTTPException(status_code=400, detail="query too long")
+    fast = _memory_fastpath(query)
+    if fast:
+        return {"ok": True, "reply": fast["reply"], "date": _local_date()}
+    query = _memory_block(query)
     try:
         p = subprocess.run(
             ["hermes", "chat", "-Q", "--query-file", "-"],
@@ -1615,6 +1620,329 @@ def releases():
     _REL_CACHE["at"] = now
     _REL_CACHE["data"] = data
     return data
+
+
+# ---------------------------------------------------------------- persistent memory (cross-session)
+
+MEMORY_FILE = AGENTOS / "memory.json"
+
+
+def _load_memory() -> list[dict]:
+    if not MEMORY_FILE.exists():
+        return []
+    try:
+        data = json.loads(MEMORY_FILE.read_text(encoding="utf-8"))
+        return data.get("facts", []) if isinstance(data, dict) else []
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _save_memory(facts: list[dict]) -> None:
+    AGENTOS.mkdir(parents=True, exist_ok=True)
+    MEMORY_FILE.write_text(json.dumps({"facts": facts[-200:]}, indent=1, default=str), encoding="utf-8")
+
+
+def _mem_id(text: str) -> str:
+    return _hashlib.sha1(_re.sub(r"\s+", " ", text.strip().lower()).encode()).hexdigest()[:10]
+
+
+@router.get("/memfacts")
+def memory_get():
+    facts = _load_memory()
+    facts_sorted = sorted(facts, key=lambda f: f.get("created", ""), reverse=True)
+    return {"facts": facts_sorted[:200], "total": len(facts)}
+
+
+@router.post("/memfacts")
+def memory_add(body: dict = Body(...)):
+    text = str(body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    if len(text) > 500:
+        text = text[:500]
+    tags = body.get("tags") if isinstance(body.get("tags"), list) else []
+    facts = _load_memory()
+    mid = _mem_id(text)
+    if any(f.get("id") == mid for f in facts):
+        return {"ok": True, "id": mid, "duplicate": True}
+    fact = {"id": mid, "text": text, "tags": tags, "source": str(body.get("source") or "deck"),
+            "created": _dt.datetime.now().isoformat(timespec="seconds")}
+    facts.append(fact)
+    _save_memory(facts)
+    return {"ok": True, "id": mid, "duplicate": False}
+
+
+@router.delete("/memfacts")
+def memory_delete(body: dict = Body(...)):
+    mid = str(body.get("id") or "")
+    facts = _load_memory()
+    kept = [f for f in facts if f.get("id") != mid]
+    if len(kept) == len(facts):
+        raise HTTPException(status_code=404, detail="fact not found")
+    _save_memory(kept)
+    return {"ok": True, "removed": mid}
+
+
+# remember/forget fast-paths for /command — no agent call needed
+_REMEMBER_RE = re.compile(r"^(?:/remember|please remember|remember)(?: that|:| this)?\s+(.+)$", re.IGNORECASE | re.DOTALL)
+_FORGET_RE = re.compile(r"^/forget\s+(.+)$", re.IGNORECASE | re.DOTALL)
+
+
+def _memory_fastpath(query: str) -> dict | None:
+    m = _REMEMBER_RE.match(query.strip())
+    if m:
+        text = m.group(1).strip()
+        if text:
+            facts = _load_memory()
+            mid = _mem_id(text)
+            if any(f.get("id") == mid for f in facts):
+                return {"ok": True, "reply": "Already in memory: " + text}
+            facts.append({"id": mid, "text": text, "tags": [], "source": "conversation",
+                          "created": _dt.datetime.now().isoformat(timespec="seconds")})
+            _save_memory(facts)
+            return {"ok": True, "reply": "Stored in permanent memory: " + text}
+    m = _FORGET_RE.match(query.strip())
+    if m:
+        needle = m.group(1).strip().lower()
+        facts = _load_memory()
+        matches = [f for f in facts if needle in f.get("text", "").lower()]
+        if not matches:
+            close = difflib.get_close_matches(needle, [f.get("text", "") for f in facts], n=3, cutoff=0.4)
+            hint = (" Closest: " + "; ".join(close)) if close else ""
+            return {"ok": True, "reply": "No memory matches '" + needle + "'." + hint}
+        drop = {f["id"] for f in matches}
+        _save_memory([f for f in facts if f["id"] not in drop])
+        return {"ok": True, "reply": "Forgot " + str(len(matches)) + " memory item(s): " +
+                "; ".join(f.get("text", "")[:80] for f in matches[:3])}
+    return None
+
+
+def _memory_block(query: str) -> str:
+    """Prepend durable facts so every agent session starts with D's context."""
+    facts = _load_memory()
+    if not facts:
+        return query
+    facts_sorted = sorted(facts, key=lambda f: f.get("created", ""), reverse=True)[:40]
+    block = ("Persistent memory from previous sessions (background context — use when "
+             "relevant, never recite it back):\n" +
+             "\n".join("- " + f.get("text", "") for f in facts_sorted) + "\n\n")
+    return block + query
+
+
+# ---------------------------------------------------------------- remediation (approval-gated self-healing)
+#
+# The scanner pings every configured service on a timer. A down service with a
+# `remediation.auto.<name>` restart command in agentos.yaml is restarted
+# automatically (cooldown + hourly caps apply); anything else lands in
+# `pending` and waits for a one-click APPROVE in the deck (or Telegram notice).
+
+_REMEDIATION_CFG = _CFG.get("remediation") if isinstance(_CFG.get("remediation"), dict) else {}
+REMEDIATION_FILE = CACHE / "remediation.json"
+_REM_START_GUARD = [False]
+
+
+def _rem_state() -> dict:
+    if REMEDIATION_FILE.exists():
+        try:
+            data = json.loads(REMEDIATION_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                data.setdefault("events", [])
+                data.setdefault("pending", [])
+                data.setdefault("enabled", None)  # None = follow agentos.yaml
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"events": [], "pending": [], "enabled": None}
+
+
+def _rem_enabled() -> bool:
+    state = _rem_state()
+    if state.get("enabled") is not None:
+        return bool(state["enabled"])
+    return bool(_REMEDIATION_CFG.get("enabled"))
+
+
+def _rem_save(state: dict) -> None:
+    CACHE.mkdir(parents=True, exist_ok=True)
+    state["events"] = state["events"][-80:]
+    REMEDIATION_FILE.write_text(json.dumps(state, indent=1, default=str), encoding="utf-8")
+
+
+def _rem_event(state: dict, kind: str, service: str, detail: str) -> dict:
+    ev = {"id": _hashlib.sha1((kind + service + str(time.time())).encode()).hexdigest()[:10],
+          "kind": kind, "service": service, "detail": detail[:300],
+          "at": _dt.datetime.now().isoformat(timespec="seconds"), "ts_epoch": time.time()}
+    state["events"].append(ev)
+    return ev
+
+
+def _rem_auto_map() -> dict:
+    m = _REMEDIATION_CFG.get("auto")
+    return m if isinstance(m, dict) else {}
+
+
+def _rem_ping_service(name: str):
+    for svc in SERVICE_PINGS:
+        if svc["name"] == name:
+            r = _ping(svc["url"])
+            return bool(r.get("ok")), r.get("ms"), str(r.get("code") or r.get("error") or "")
+    return None, None, "unknown service"
+
+
+def _rem_last_action_ts(state: dict, service: str) -> float:
+    for ev in reversed(state["events"]):
+        if ev.get("service") == service and ev.get("kind") in ("auto_fixed", "auto_failed", "approved"):
+            return float(ev.get("ts_epoch") or 0)
+    return 0.0
+
+
+def _remediation_scan(manual: bool = False) -> dict:
+    if not (manual or _rem_enabled()):
+        return {"skipped": "disabled"}
+    cooldown = int(_REMEDIATION_CFG.get("cooldown_minutes", 30)) * 60
+    max_hour = int(_REMEDIATION_CFG.get("max_auto_per_hour", 4))
+    auto = _rem_auto_map()
+    ignored = {str(x) for x in (_REMEDIATION_CFG.get("ignore") or [])}
+    state = _rem_state()
+    now = time.time()
+    auto_last_hour = [e for e in state["events"]
+                      if e.get("kind") in ("auto_fixed", "auto_failed") and now - float(e.get("ts_epoch") or 0) < 3600]
+    pending_by_service = {p.get("service"): p for p in state["pending"]}
+    actions = []
+    for svc in SERVICE_PINGS:
+        name = svc["name"]
+        if name in ignored:
+            continue
+        up, ms, detail = _rem_ping_service(name)
+        if up:
+            stale = pending_by_service.pop(name, None)
+            if stale:
+                state["pending"] = [p for p in state["pending"] if p.get("id") != stale.get("id")]
+                _rem_event(state, "recovered", name, "back online before approval — pending cleared")
+                actions.append({"service": name, "result": "recovered"})
+            continue
+        if name in pending_by_service:
+            continue  # already awaiting approval
+        cmd = auto.get(name)
+        can_auto = (isinstance(cmd, str) and cmd.strip()
+                    and len(auto_last_hour) < max_hour
+                    and now - _rem_last_action_ts(state, name) >= cooldown)
+        if can_auto:
+            rc, out = _run_shell_cmd(cmd.strip(), timeout=120)
+            time.sleep(8)  # give the service a moment before the recheck
+            up2, ms2, detail2 = _rem_ping_service(name)
+            kind = "auto_fixed" if up2 else "auto_failed"
+            ev = _rem_event(state, kind, name,
+                            f"restart rc={rc} {'ok' if rc == 0 else out}; recheck "
+                            f"{'200 in ' + str(ms2) + 'ms' if up2 else detail2 or 'still down'}")
+            auto_last_hour.append(ev)
+            actions.append({"service": name, "result": kind})
+            _tg_notify(("🔧 Auto-fixed: " if up2 else "🔧 Auto-restart FAILED: ") + name)
+        else:
+            pend = {"id": _hashlib.sha1((name + str(now)).encode()).hexdigest()[:10],
+                    "service": name, "url": svc["url"], "detail": detail,
+                    "cmd": cmd if isinstance(cmd, str) and cmd.strip() else None,
+                    "created": _dt.datetime.now().isoformat(timespec="seconds")}
+            state["pending"].append(pend)
+            actions.append({"service": name, "result": "pending_approval"})
+            _tg_notify("⚠️ " + name + " is down and awaiting your approval to fix. Open the deck → // AUTOMATION.")
+    if actions:
+        _rem_save(state)
+    return {"date": _local_date(), "actions": actions}
+
+
+def _run_shell_cmd(cmd: str, timeout: int = 120) -> tuple[int, str]:
+    try:
+        p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()[-400:]
+    except subprocess.TimeoutExpired:
+        return 124, "timeout after " + str(timeout) + "s"
+    except OSError as e:
+        return 127, str(e)[:300]
+
+
+def _rem_thread_loop() -> None:
+    interval = max(2, int(_REMEDIATION_CFG.get("scan_minutes", 5))) * 60
+    while True:
+        time.sleep(interval)
+        try:
+            _remediation_scan()
+        except Exception:  # noqa: BLE001 — the scanner must never die
+            pass
+
+
+if _rem_enabled() and not _REM_START_GUARD[0]:
+    _REM_START_GUARD[0] = True
+    threading.Thread(target=_rem_thread_loop, daemon=True, name="agentos-remediation").start()
+
+
+@router.get("/remediation")
+def remediation_get():
+    state = _rem_state()
+    return {"enabled": _rem_enabled(),
+            "auto_services": sorted(_rem_auto_map().keys()),
+            "pending": state["pending"],
+            "events": sorted(state["events"], key=lambda e: e.get("ts_epoch", 0), reverse=True)[:30]}
+
+
+@router.post("/remediation/config")
+def remediation_config(body: dict = Body(...)):
+    """Runtime toggle, persisted in the remediation ledger (agentos.yaml stays untouched)."""
+    enabled = bool(body.get("enabled"))
+    state = _rem_state()
+    state["enabled"] = enabled
+    _rem_save(state)
+    if enabled and not _REM_START_GUARD[0]:
+        _REM_START_GUARD[0] = True
+        threading.Thread(target=_rem_thread_loop, daemon=True, name="agentos-remediation").start()
+    return {"ok": True, "enabled": enabled}
+
+
+@router.post("/remediation/scan")
+def remediation_scan():
+    return _remediation_scan(manual=True)
+
+
+@router.post("/remediation/approve")
+def remediation_approve(body: dict = Body(...)):
+    pid = str(body.get("id") or "")
+    state = _rem_state()
+    pend = next((p for p in state["pending"] if p.get("id") == pid), None)
+    if not pend:
+        raise HTTPException(status_code=404, detail="pending item not found")
+    state["pending"] = [p for p in state["pending"] if p.get("id") != pid]
+    name = pend.get("service", "")
+    if pend.get("cmd"):
+        rc, out = _run_shell_cmd(pend["cmd"], timeout=180)
+    else:
+        ask = (f"Service '{name}' ({pend.get('url')}) is down — {pend.get('detail')}. "
+               "Diagnose and fix it, then verify the endpoint returns 200. Report what you did.")
+        try:
+            out = _run_hermes_prompt(ask, timeout=600)
+            rc = 0
+        except HTTPException as e:
+            rc, out = 1, str(e.detail)[:300]
+    time.sleep(6)
+    up2, ms2, detail2 = _rem_ping_service(name)
+    kind = "approved_fixed" if up2 else "approved_failed"
+    _rem_event(state, kind, name,
+               f"approved fix rc={rc} {out[:120]}; recheck {'200 in ' + str(ms2) + 'ms' if up2 else detail2 or 'still down'}")
+    _rem_save(state)
+    _tg_notify(("🔧 Approved fix worked: " if up2 else "🔧 Approved fix did NOT fix: ") + name)
+    return {"ok": True, "id": pid, "service": name, "recheck_up": up2, "kind": kind}
+
+
+@router.post("/remediation/deny")
+def remediation_deny(body: dict = Body(...)):
+    pid = str(body.get("id") or "")
+    state = _rem_state()
+    pend = next((p for p in state["pending"] if p.get("id") == pid), None)
+    if not pend:
+        raise HTTPException(status_code=404, detail="pending item not found")
+    state["pending"] = [p for p in state["pending"] if p.get("id") != pid]
+    _rem_event(state, "denied", pend.get("service", ""), "dismissed without action")
+    _rem_save(state)
+    return {"ok": True, "id": pid}
 
 
 # ---------------------------------------------------------------- export / import (encrypted bundles)
