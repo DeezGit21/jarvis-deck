@@ -1,25 +1,22 @@
-// Standalone preview entry: mounts the real desktop/plugin.js UI with a
-// stubbed SDK and mocked data. No Hermes runtime required.
+// Standalone preview entry: mounts the real desktop/plugin.js UI against the
+// real plugin backend (Vite proxies /api/plugins/agentos to the standalone
+// uvicorn runner). No demo/mock data anywhere — if the backend is down the UI
+// shows the real error instead of fake tasks.
 import { createRoot } from 'react-dom/client'
 import plugin from '../desktop/plugin.js'
 import { ROUTES_AREA } from './hermes-plugin-sdk.js'
-import { mockRest } from './demo-data.js'
 import './theme.css'
 
 const routes = []
 plugin.register({
   rest: async (path, opts) => {
-    // Real plugin backend first (Vite proxies /api/plugins/agentos to the
-    // standalone uvicorn runner); fall back to demo mocks when it's down.
-    try {
-      const r = await fetch('/api/plugins/agentos' + path, {
-        method: (opts && opts.method) || 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        body: opts && opts.body ? JSON.stringify(opts.body) : undefined,
-      })
-      if (r.ok) return await r.json()
-    } catch { /* backend not running — use mocks */ }
-    return mockRest(path, opts)
+    const r = await fetch('/api/plugins/agentos' + path, {
+      method: (opts && opts.method) || 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      body: opts && opts.body ? JSON.stringify(opts.body) : undefined,
+    })
+    if (!r.ok) throw new Error('backend ' + r.status + ' on ' + path + ' — is the agentos backend running?')
+    return await r.json()
   },
   os: { openExternal: url => window.open(url, '_blank', 'noopener') },
   registerMany: defs => { for (const d of defs) routes.push(d) },
