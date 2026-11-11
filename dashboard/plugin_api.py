@@ -1304,6 +1304,41 @@ def money_webull_login():
     return _launch_webull_login()
 
 
+@router.post("/money/webull/browser-session")
+def money_webull_browser_session(body: dict = Body(...)):
+    """Receive Webull web-session material from the user's own browser console.
+
+    The user runs a snippet in DevTools on webull.com that POSTs their
+    localStorage/cookies here over loopback — tokens travel machine-local and
+    never pass through chat. We keep only auth-relevant entries and write them
+    to agentos/cache/webull-browser-session.json for money_webull.py to use.
+    """
+    ls = body.get("localStorage") or {}
+    ck = body.get("cookies") or ""
+    keep = {}
+    for k, v in (ls.items() if isinstance(ls, dict) else []):
+        v = str(v)
+        if re.search(r"(?i)token|access|did|region|uuid|device", k) and 8 < len(v) < 4000:
+            keep[str(k)] = v
+    out = {"received_at": _dt.datetime.now(AGENTOS_TZ).isoformat(timespec="seconds"),
+           "keys": sorted(keep), "cookies": str(ck)[:4000]}
+    CACHE.mkdir(parents=True, exist_ok=True)
+    (CACHE / "webull-browser-session.json").write_text(
+        json.dumps({"raw_keys": keep, "meta": out}, indent=1), encoding="utf-8")
+    return Response(content=json.dumps({"ok": True, "stored_keys": sorted(keep)}),
+                    media_type="application/json",
+                    headers={"Access-Control-Allow-Origin": "*"})
+
+
+@router.options("/money/webull/browser-session")
+def money_webull_browser_session_preflight():
+    return Response(status_code=204, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+    })
+
+
 # ------------------------------------------------------- planner (ADHD Planner app)
 
 @router.get("/planner/today")
