@@ -1668,6 +1668,13 @@ function TodosCard() {
     }
   }
   const [doneId, setDoneId] = useState(null)
+  const [menuFor, setMenuFor] = useState(null)
+  useEffect(() => {
+    if (!menuFor) return undefined
+    const onKey = e => { if (e.key === 'Escape') setMenuFor(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menuFor])
   const complete = async t => {
     if (doneId) return
     setDoneId(t.id)
@@ -1753,6 +1760,12 @@ function TodosCard() {
         d && d.tasks.length === 0 && plannerRows.length === 0 && jsx('div', { className: 'py-2 text-sm text-(--ui-text-tertiary)', children: 'No open tasks.' }),
         d && jsx('div', { className: 'space-y-1', children: d.tasks.map((t, i) => {
     const txt2 = (t.title || '').toLowerCase()
+    // overflow menu actions (hover-revealed — keeps the resting row at 2 buttons)
+    const extraActions = [
+      { icon: '\uD83E\uDDE9', label: 'break it down', title: 'Ask JARVIS to break this into steps', cmd: 'break this task into concrete ordered steps and add them to my list: ' + (t.title || '') },
+      { icon: '\u23F0', label: 'remind me tonight', title: 'Evening reminder via Telegram', cmd: 'remind me tonight about: ' + (t.title || '') },
+      { icon: '\uD83D\uDCE8', label: 'push to telegram', title: 'Send this task to your Telegram as a note', cmd: 'send this to my telegram as a task note: ' + (t.title || '') },
+    ]
     const hasScript2 = /\.py\b|run\s|script/.test(txt2)
     const hasDown2 = /down|port|refused|502|winerror/.test(txt2)
     const kind2 = hasScript2 ? 'run' : hasDown2 ? 'restart' : 'delegate'
@@ -1761,7 +1774,7 @@ function TodosCard() {
       : kind2 === 'restart' ? 'restart service ' + (t.title.match(/['\u2018\u2019]([^'\u2018\u2019]+)['\u2018\u2019]/)?.[1] || 'unknown')
       : t.title
     return jsxs('div', {
-            className: 'ao-in flex items-baseline gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
+            className: 'group ao-in flex items-baseline gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
             style: { animationDelay: 240 + i * 70 + 'ms' },
             onMouseEnter: () => HoverBus.set((t.title || '').toLowerCase()),
             onMouseLeave: () => HoverBus.clear(),
@@ -1776,18 +1789,45 @@ function TodosCard() {
                 className: 'ao-btn',
                 'data-kind': kind2,
                 onClick: () => { ConsoleStore.send(cmd2) },
-                title: cmd2,
+                title: (kind2 === 'run' ? 'Run script with JARVIS: ' : kind2 === 'restart' ? 'Restart service with JARVIS: ' : 'Delegate to JARVIS: ') + (cmd2 || ''),
+                'aria-label': (kind2 === 'run' ? 'Run script: ' : kind2 === 'restart' ? 'Restart service: ' : 'Delegate to JARVIS: ') + (t.title || ''),
                 children: label2
               }),
-              jsx('button', {
-                type: 'button',
-                disabled: doneId === t.id,
-                onClick: () => complete(t),
-                title: 'Mark done (syncs to Telegram)',
-                'aria-label': 'Complete: ' + t.title,
-                className: 'shrink-0 rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary) transition-colors hover:border-[#3fb950] hover:text-[#3fb950] disabled:opacity-40',
-                children: doneId === t.id ? '\u2026' : '\u2713'
-              })
+              jsxs('span', { className: 'relative ml-auto flex shrink-0 items-center gap-1', children: [
+                jsx('button', {
+                  type: 'button',
+                  disabled: doneId === t.id,
+                  onClick: () => complete(t),
+                  title: 'Mark done (syncs to Telegram)',
+                  'aria-label': 'Complete: ' + t.title,
+                  className: 'rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary) transition-colors hover:border-[#3fb950] hover:text-[#3fb950] disabled:opacity-40',
+                  children: doneId === t.id ? '\u2026' : '\u2713'
+                }),
+                jsx('button', {
+                  type: 'button',
+                  onClick: () => setMenuFor(menuFor === t.id ? null : t.id),
+                  'aria-label': 'More actions: ' + t.title,
+                  'aria-expanded': menuFor === t.id,
+                  title: 'More actions',
+                  className: 'rounded border border-transparent px-1.5 py-0.5 font-mono text-[0.6rem] text-(--ui-text-quaternary) opacity-0 transition-opacity duration-150 hover:border-(--ui-stroke-secondary) hover:text-(--ui-accent) focus:opacity-100 group-hover:opacity-100 ' + (menuFor === t.id ? 'opacity-100 text-(--ui-accent)' : ''),
+                  children: '\u22EF'
+                }),
+                menuFor === t.id && jsxs(Fragment, { children: [
+                  jsx('div', { className: 'fixed inset-0 z-20', onClick: () => setMenuFor(null), 'aria-hidden': 'true' }),
+                  jsx('div', { role: 'menu', className: 'ao-in absolute right-0 z-30 w-48 overflow-hidden rounded-lg border border-(--ui-stroke-secondary) bg-[rgba(10,14,20,0.96)] shadow-xl backdrop-blur-md ' + (i >= d.tasks.length - 2 ? 'bottom-full mb-1' : 'top-full mt-1'), style: { animationDuration: '180ms' },
+                    children: extraActions.map(x => jsxs('button', {
+                      type: 'button', role: 'menuitem',
+                      title: x.title,
+                      onClick: () => { setMenuFor(null); ConsoleStore.send(x.cmd) },
+                      className: 'flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-(--ui-text-secondary) transition-colors duration-150 hover:bg-(--ui-tertiary-background) hover:text-(--ui-text-primary)',
+                      children: [
+                        jsx('span', { className: 'w-4 shrink-0 text-center', children: x.icon }),
+                        jsx('span', { children: x.label })
+                      ]
+                    }, x.label))
+                  })
+                ] })
+              ] })
             ]
           }, t.id)
           })}),
