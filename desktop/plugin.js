@@ -59,6 +59,9 @@ const CSS = `
   border: 1px solid var(--ui-stroke-secondary);
   background: color-mix(in srgb, var(--ui-card) 72%, transparent);
   backdrop-filter: blur(18px); box-shadow: 0 12px 48px rgba(0,0,0,.45); }
+/* Electron HUD companion: whole panel drags the frameless window; buttons stay clickable */
+.ao-hud-drag { -webkit-app-region: drag; }
+.ao-hud-drag button, .ao-hud-drag input, .ao-hud-drag a { -webkit-app-region: no-drag; }
 
 .ao-label { font-size: .6875rem; text-transform: uppercase; letter-spacing: .14em; color: var(--ui-text-tertiary); }
 .ao-num { font-variant-numeric: tabular-nums; font-size: 1.6rem; font-weight: 600; line-height: 1.1;
@@ -4186,30 +4189,84 @@ function HudOverlay() {
   const todoQ = useQuery({ queryKey: ['agentos', 'todos'], queryFn: () => REST('/todos'), refetchInterval: 120000 })
   const svcs = (statusQ.data && statusQ.data.services) || []
   const up = svcs.filter(s => s.up === true).length
-  const down = svcs.filter(s => s.up === false).length
+  const downSvcs = svcs.filter(s => s.up === false)
   const open = (todoQ.data && todoQ.data.total_open) || 0
+  const tasks = (todoQ.data && todoQ.data.tasks) || []
   const word = { idle: 'Standing by', listening: 'Listening…', thinking: 'Processing…', speaking: 'Speaking', working: 'Working…' }[state]
   const busy = ConsoleStore.busy
+  const companion = typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('companion') === '1'
   return jsxs('div', {
-    className: 'ao-hud ao-in',
+    className: 'ao-hud ao-in' + (companion ? ' ao-hud-drag' : ''),
     children: [
       jsxs('div', { className: 'flex items-center gap-3', children: [
-        jsx('span', { className: 'text-sm font-semibold ao-hero-glow', style: { color: ORB_STATE_COLORS[state] }, children: word }),
-        busy && jsx('span', { className: 'truncate font-mono text-[0.6rem] text-(--ui-text-tertiary)', children: '· ' + (ConsoleStore.current || '') }),
-        jsx('span', { className: 'ml-auto font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: now.toLocaleTimeString('en-US', { hour12: false }) }),
-        jsx('button', { type: 'button', className: 'ao-wbtn', title: 'Exit HUD', onClick: () => ModeStore.set(null), children: '✕' })
+        jsx(MiniOrb, { size: 46 }),
+        jsxs('div', { className: 'min-w-0 flex-1', children: [
+          jsxs('div', { className: 'flex items-center gap-3', children: [
+            jsx('span', { className: 'text-sm font-semibold ao-hero-glow', style: { color: ORB_STATE_COLORS[state] }, children: word }),
+            busy && jsx('span', { className: 'truncate font-mono text-[0.6rem] text-(--ui-text-tertiary)', children: '· ' + (ConsoleStore.current || '') }),
+            jsx('span', { className: 'ml-auto font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: now.toLocaleTimeString('en-US', { hour12: false }) }),
+            jsx('button', {
+              type: 'button', className: 'ao-wbtn',
+              title: companion ? 'Hide HUD (Alt+Space brings it back)' : 'Exit HUD',
+              onClick: () => {
+                if (companion && window.hudCompanion && window.hudCompanion.hide) window.hudCompanion.hide()
+                else ModeStore.set(null)
+              },
+              children: '✕'
+            })
+          ] }),
+          jsxs('div', { className: 'mt-1 flex items-center gap-2 font-mono text-[0.65rem]', children: [
+            jsx('span', { children: 'SVC ' }),
+            jsx('span', { style: { color: downSvcs.length > 0 ? '#f5495b' : '#3fb950' }, children: up + '/' + svcs.length }),
+            jsx('span', { className: 'ml-2', children: open + ' open' }),
+            (downSvcs.length > 0) && jsx('span', { className: 'text-[#f5495b]', children: '· ' + downSvcs.length + ' down' })
+          ] })
+        ] })
       ] }),
-      jsxs('div', { className: 'mt-2 flex items-center gap-2 font-mono text-[0.65rem]', children: [
-        jsx('span', { children: 'SVC ' }),
-        jsx('span', { style: { color: down > 0 ? '#f5495b' : '#3fb950' }, children: up + '/' + svcs.length }),
-        jsx('span', { className: 'ml-2', children: open + ' open' }),
-        (down > 0) && jsx('span', { className: 'text-[#f5495b]', children: '· ' + down + ' down' })
-      ] }),
-      jsxs('div', { className: 'mt-3 flex items-center gap-1.5', children: [
+      downSvcs.length > 0 && jsx('div', { className: 'mt-2 truncate font-mono text-[0.62rem] text-[#f5495b]', title: downSvcs.map(s => s.name).join(', '), children:
+        '▼ ' + downSvcs.map(s => s.name).join(' · ') }),
+      tasks.length > 0 && jsx('div', { className: 'mt-1.5 space-y-0.5', children: tasks.slice(0, 3).map((t, i) =>
+        jsx('div', { className: 'truncate font-mono text-[0.62rem] text-(--ui-text-tertiary)', title: t.title, children:
+          '▸ ' + t.title }, 'hudtask' + i)) }),
+      jsxs('div', { className: 'mt-2.5 flex items-center gap-1.5', children: [
         jsx('button', { type: 'button', className: 'ao-runbtn', onClick: () => { JarvisCtl.send('Generate my daily brief') }, children: ['◆', 'brief'] }),
         jsx('button', { type: 'button', className: 'ao-runbtn', onClick: () => { JarvisCtl.openSpotlight && JarvisCtl.openSpotlight() }, children: ['⌘', 'ask'] }),
         state === 'speaking' && jsx('button', { type: 'button', className: 'ao-runbtn border-[#f5495b]/50 text-[#f5495b]', onClick: stopJarvisSpeech, children: ['⏹', 'stop'] })
       ] })
+    ]
+  })
+}
+
+// Compact state orb for the HUD companion: gradient core tinted by assistant
+// state + the same 2D instrument rings OrbHud draws, at miniature scale.
+const MINI_ORB_CORE = {
+  idle: 'rgba(92, 214, 255, 0.85)',
+  listening: 'rgba(248, 81, 73, 0.9)',
+  thinking: 'rgba(168, 85, 247, 0.9)',
+  speaking: 'rgba(168, 85, 247, 0.9)',
+  working: 'rgba(168, 85, 247, 0.95)'
+}
+function MiniOrb({ size = 46 }) {
+  const [st, setSt] = useState(OrbBus.state)
+  useEffect(() => OrbBus.subscribe(setSt), [])
+  const core = MINI_ORB_CORE[st] || MINI_ORB_CORE.idle
+  const active = st !== 'idle'
+  return jsxs('div', {
+    role: 'status', 'aria-label': 'Jarvis mini orb', title: 'Jarvis state: ' + st,
+    style: { position: 'relative', width: size, height: size, flex: 'none' },
+    children: [
+      jsx('div', {
+        'aria-hidden': 'true',
+        style: {
+          position: 'absolute', inset: '14%', borderRadius: '50%',
+          background: 'radial-gradient(circle at 36% 30%, rgba(255,255,255,0.55), ' + core + ' 42%, transparent 74%)',
+          filter: 'blur(3px)',
+          animation: 'aoBreathe ' + (active ? '1.2s' : '3.4s') + ' ease-in-out infinite',
+          opacity: active ? 1 : 0.65
+        }
+      }),
+      jsx(OrbHud, {})
     ]
   })
 }

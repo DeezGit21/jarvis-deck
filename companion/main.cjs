@@ -3,7 +3,8 @@
 // visibility with the Alt+Space global shortcut.
 //
 // Run: npm run hud   (first run needs: npm install)
-const { app, BrowserWindow, globalShortcut } = require('electron')
+const { app, BrowserWindow, globalShortcut, ipcMain } = require('electron')
+const path = require('path')
 
 const DECK_URL = process.env.JARVIS_DECK_URL || 'http://localhost:4527/?companion=1&mode=hud'
 const HOTKEY = process.env.JARVIS_HUD_HOTKEY || 'Alt+Space'
@@ -13,7 +14,7 @@ let win = null
 function create() {
   win = new BrowserWindow({
     width: 600,
-    height: 220,
+    height: 320,
     x: undefined, // let the OS place it; user can drag the frameless window
     y: undefined,
     frame: false,
@@ -23,7 +24,11 @@ function create() {
     skipTaskbar: true,
     hasShadow: false,
     fullscreenable: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false }
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.cjs')
+    }
   })
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
@@ -39,6 +44,7 @@ function toggle() {
 }
 
 app.whenReady().then(() => {
+  ipcMain.on('hud:hide', () => { if (win && win.isVisible()) win.hide() })
   create()
   const ok = globalShortcut.register(HOTKEY, toggle)
   if (!ok) console.error('global shortcut unavailable:', HOTKEY)
