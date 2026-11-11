@@ -642,6 +642,7 @@ const ConsoleStore = {
     this.current = query
     this.since = Date.now()
     this.setBusy(true)
+    Tts.ack()
     OrbBus.set(query.startsWith('/') ? 'working' : 'thinking')
     try {
       const r = await REST('/command', { method: 'POST', body: { query } })
@@ -661,9 +662,13 @@ const ConsoleStore = {
   }
 }
 
+// Rotating near-instant acknowledgements (backend pre-warms these as edge-tts).
+const TTS_ACK_LINES = ['Generating brief now, sir', 'Right away, sir', 'On it, sir', 'At once, sir', 'Working on it now, sir']
+
 // Text-to-speech pipeline (owned by the store so every surface speaks).
 const Tts = {
   supported: typeof window !== 'undefined' && !!window.speechSynthesis,
+  _ackI: 0,
   on() {
     try { return localStorage.getItem('agentos-tts') !== 'off' } catch { return true }
   },
@@ -672,6 +677,32 @@ const Tts = {
       const n = JSON.parse(localStorage.getItem('agentos-tts-rate'))
       return typeof n === 'number' ? n : 1.05
     } catch { return 1.05 }
+  },
+  vol() {
+    try {
+      const n = JSON.parse(localStorage.getItem('agentos-tts-vol'))
+      return typeof n === 'number' && n >= 0 && n <= 1 ? n : 1
+    } catch { return 1 }
+  },
+  setVolume(v) {
+    const clamped = Math.max(0, Math.min(1, Number(v) || 0))
+    try { localStorage.setItem('agentos-tts-vol', JSON.stringify(clamped)) } catch { /* ignore */ }
+    if (this._audio) { try { this._audio.volume = clamped } catch { /* ignore */ } }
+  },
+  // Near-instant verbal acknowledgement ("Generating brief now, sir") for
+  // briefs/actions — always the fast pre-warmed edge-tts path, so D hears
+  // JARVIS confirm within ~100ms while the real reply synthesizes.
+  ack(phrase) {
+    if (!this.on()) return false
+    const line = phrase || TTS_ACK_LINES[this._ackI++ % TTS_ACK_LINES.length]
+    this.stop()
+    try {
+      const audio = new Audio('/api/plugins/agentos/tts?ack=1&text=' + encodeURIComponent(line))
+      this._audio = audio
+      audio.volume = this.vol()
+      audio.play().catch(() => this._fallbackSpeak(line, null))
+    } catch { this._fallbackSpeak(line, null) }
+    return true
   },
   speak(text, onEnd) {
     if (!this.on()) return false
@@ -697,6 +728,7 @@ const Tts = {
       // as edge-tts chunks arrive — first sound well under a second.
       const url = '/api/plugins/agentos/tts?text=' + encodeURIComponent(clean)
       const audio = new Audio(url)
+      audio.volume = this.vol()
       this._audio = audio
       audio.onended = done
       audio.onerror = () => this._fallbackSpeak(clean, done)
@@ -706,14 +738,15 @@ const Tts = {
     this._fallbackSpeak(clean, done)
   },
   _fallbackSpeak(clean, done) {
-    if (!this.supported) { done(); return }
+    if (!this.supported) { if (done) done(); return }
     try {
       const u = new SpeechSynthesisUtterance(clean)
       u.rate = this.rate()
+      u.volume = this.vol()
       u.onend = done
       u.onerror = done
       window.speechSynthesis.speak(u)
-    } catch { done() }
+    } catch { if (done) done() }
   },
   stop() {
     try { if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel() } catch { /* ignore */ }
@@ -1476,6 +1509,7 @@ function BriefCard() {
   async function generate() {
     setGenState('running')
     haptic('tap')
+    Tts.ack('Generating brief now, sir')
     try {
       await REST('/brief/generate', { method: 'POST', body: {}, timeoutMs: 480000 })
       setGenState(null)
@@ -1490,6 +1524,7 @@ function BriefCard() {
   async function runBrief() {
     haptic('tap')
     Chimes.play('up')
+    Tts.ack(brief ? 'Right away, sir' : 'Generating brief now, sir')
     setRunRes(null)
     setRunState('preparing')
     try {
@@ -2096,6 +2131,8 @@ function ConsoleCard({ compact = false }) {
 
   const ttsOn = Tts.on()
   const ttsRate = Tts.rate()
+  const [volOpen, setVolOpen] = useState(false)
+  const ttsVol = Tts.vol()
   const TTS_RATES = [0.9, 1.05, 1.25, 1.5]
   function cycleRate() {
     const i = TTS_RATES.indexOf(ttsRate)
@@ -2209,15 +2246,38 @@ function ConsoleCard({ compact = false }) {
     ] }),
     jsxs('div', { className: 'flex items-center gap-2', children: [
       jsx('span', { className: 'ao-mini-orb', 'data-busy': busy || listening ? '1' : '0', 'aria-hidden': 'true' }),
-      Tts.supported && jsx('button', {
-        onClick: toggleTts,
-        className: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-colors ' +
-          (ttsOn
-            ? 'border-(--ui-accent) text-(--ui-accent)'
-            : 'border-(--ui-stroke-secondary) text-(--ui-text-tertiary) hover:border-(--ui-accent) hover:text-(--ui-accent)'),
-        title: ttsOn ? 'Voice replies on — click to mute' : 'Voice replies muted — click to speak',
-        children: jsx('span', { className: 'text-sm', children: ttsOn ? '🔊' : '🔇' })
-      }),
+      Tts.supported && jsxs('div', { className: 'relative shrink-0', children: [
+        jsx('button', {
+          onClick: () => setVolOpen(o => !o),
+          className: 'flex h-9 w-9 items-center justify-center rounded-full border transition-colors ' +
+            (ttsOn
+              ? 'border-(--ui-accent) text-(--ui-accent)'
+              : 'border-(--ui-stroke-secondary) text-(--ui-text-tertiary) hover:border-(--ui-accent) hover:text-(--ui-accent)'),
+          title: 'Voice volume — click to open',
+          children: jsx('span', { className: 'text-sm', children: ttsOn ? '🔊' : '🔇' })
+        }),
+        volOpen && jsxs('div', {
+          className: 'absolute bottom-11 left-0 z-50 w-60 rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-card) p-3 shadow-2xl',
+          children: [
+            jsx('div', { className: 'mb-2 text-[0.65rem] uppercase tracking-wider text-(--ui-text-tertiary)', children: 'voice volume' }),
+            jsxs('div', { className: 'flex items-center gap-2', children: [
+              jsx('button', {
+                onClick: toggleTts,
+                className: 'ao-kbd shrink-0 ' + (ttsOn ? 'text-(--ui-accent)' : 'text-[#f85149]'),
+                title: ttsOn ? 'Mute voice replies' : 'Unmute voice replies',
+                children: ttsOn ? 'mute' : 'muted'
+              }),
+              jsx('input', {
+                type: 'range', min: 0, max: 100, value: Math.round(ttsVol * 100),
+                onChange: e => { Tts.setVolume(e.target.value / 100); force(v => v + 1) },
+                className: 'min-w-0 flex-1 accent-[#a855f7]',
+                'aria-label': 'Voice volume'
+              }),
+              jsx('span', { className: 'w-8 shrink-0 text-right text-xs text-(--ui-text-secondary)', children: Math.round(ttsVol * 100) + '%' })
+            ] })
+          ]
+        })
+      ] }),
       micOk && jsx('button', {
         onClick: startVoice,
         className: 'relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-colors ' +

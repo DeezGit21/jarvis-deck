@@ -3,13 +3,13 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "JARVIS Deck — open-source standalone control deck for your personal agent: neural plasma orb, memory galaxy, voice console.",
+  "description": "JARVIS Deck \u2014 open-source standalone control deck for your personal agent: neural plasma orb, memory galaxy, voice console.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "lint": "vite build",
     "preview": "vite preview",
-    "hud": "electron companion/main.js"
+    "hud": "electron companion/main.cjs"
   },
   "dependencies": {
     "lucide-react": "^1.70.0",
