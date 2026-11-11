@@ -62,6 +62,12 @@ const CSS = `
 /* Electron HUD companion: whole panel drags the frameless window; buttons stay clickable */
 .ao-hud-drag { -webkit-app-region: drag; }
 .ao-hud-drag button, .ao-hud-drag input, .ao-hud-drag a { -webkit-app-region: no-drag; }
+/* companion: kill the opaque page background so the OS-level transparent
+   window is actually see-through, and pin the panel to the window bounds
+   (no more blank dark margins around it) */
+html.ao-companion, html.ao-companion body, html.ao-companion #root { background: transparent !important; }
+.ao-hud-fill { left: 8px; right: 8px; top: 8px; transform: none; width: auto;
+  background: color-mix(in srgb, var(--ui-card) 55%, transparent); }
 
 .ao-label { font-size: .6875rem; text-transform: uppercase; letter-spacing: .14em; color: var(--ui-text-tertiary); }
 .ao-num { font-variant-numeric: tabular-nums; font-size: 1.6rem; font-weight: 600; line-height: 1.1;
@@ -4196,8 +4202,38 @@ function HudOverlay() {
   const busy = ConsoleStore.busy
   const companion = typeof location !== 'undefined' &&
     new URLSearchParams(location.search).get('companion') === '1'
+  const rootRef = useRef(null)
+  // Auto-fit the companion window to the panel so there is no dead space below.
+  useEffect(() => {
+    if (!companion || !window.hudCompanion || !rootRef.current) return undefined
+    const el = rootRef.current
+    const report = () => window.hudCompanion.resize(Math.ceil(el.getBoundingClientRect().height) + 20)
+    const ro = new ResizeObserver(report)
+    ro.observe(el)
+    report()
+    return () => ro.disconnect()
+  }, [companion])
+  // Manual window drag for the Electron companion (app-region is unreliable in
+  // transparent frameless windows on Windows): press anywhere that isn't a
+  // button/input and the window follows the cursor until release.
+  useEffect(() => {
+    if (!companion || !window.hudCompanion) return undefined
+    const onDown = e => {
+      if (e.target && e.target.closest && e.target.closest('button,input,a,summary')) return
+      window.hudCompanion.startDrag()
+    }
+    const onUp = () => window.hudCompanion.stopDrag()
+    document.addEventListener('pointerdown', onDown, true)
+    document.addEventListener('pointerup', onUp, true)
+    return () => {
+      window.hudCompanion.stopDrag()
+      document.removeEventListener('pointerdown', onDown, true)
+      document.removeEventListener('pointerup', onUp, true)
+    }
+  }, [companion])
   return jsxs('div', {
-    className: 'ao-hud ao-in' + (companion ? ' ao-hud-drag' : ''),
+    ref: rootRef,
+    className: 'ao-hud ao-in' + (companion ? ' ao-hud-fill ao-hud-drag' : ''),
     children: [
       jsxs('div', { className: 'flex items-center gap-3', children: [
         jsx(MiniOrb, { size: 46 }),
@@ -4365,7 +4401,12 @@ function AgentosPage() {
   useEffect(() => OrbBus.subscribe(st => { if (st === 'listening') Chimes.play('up') }), [])
 
   // HUD companion: render nothing but the floating panel.
-  if (companion) return jsxs(Fragment, { children: [jsx(StyleOnce, {}), jsx('div', { className: 'ao-aurora', style: { opacity: 0.4 } }), jsx(HudOverlay, {}) ] })
+  if (companion) {
+    // Transparent window: the page must not paint any background (the aurora
+    // layer painted the opaque dark rectangle D saw around the HUD).
+    try { document.documentElement.classList.add('ao-companion') } catch { /* ignore */ }
+    return jsxs(Fragment, { children: [jsx(StyleOnce, {}), jsx(HudOverlay, {})] })
+  }
 
   return jsxs('div', {
     className: 'relative flex h-full flex-col gap-3 overflow-auto p-4 text-sm',
