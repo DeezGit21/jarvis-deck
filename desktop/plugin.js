@@ -1697,8 +1697,19 @@ function TodosCard() {
   useEffect(() => {
     if (!menuFor) return undefined
     const onKey = e => { if (e.key === 'Escape') setMenuFor(null) }
+    // Close on any press outside the menu + its trigger. A fixed backdrop div
+    // is NOT reliable here: ancestors with blur/transform re-scope `fixed` to
+    // the card, so clicks outside the card never hit it and the menu sticks.
+    const onDown = e => {
+      if (e.target && e.target.closest && e.target.closest('[data-task-menu]')) return
+      setMenuFor(null)
+    }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    document.addEventListener('pointerdown', onDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onDown, true)
+    }
   }, [menuFor])
   const complete = async t => {
     if (doneId) return
@@ -1818,7 +1829,7 @@ function TodosCard() {
                 'aria-label': (kind2 === 'run' ? 'Run script: ' : kind2 === 'restart' ? 'Restart service: ' : 'Delegate to JARVIS: ') + (t.title || ''),
                 children: label2
               }),
-              jsxs('span', { className: 'relative ml-auto flex shrink-0 items-center gap-1', children: [
+              jsxs('span', { 'data-task-menu': true, className: 'relative ml-auto flex shrink-0 items-center gap-1', children: [
                 jsx('button', {
                   type: 'button',
                   disabled: doneId === t.id,
@@ -1837,9 +1848,7 @@ function TodosCard() {
                   className: 'rounded border border-transparent px-1.5 py-0.5 font-mono text-[0.6rem] text-(--ui-text-quaternary) opacity-0 transition-opacity duration-150 hover:border-(--ui-stroke-secondary) hover:text-(--ui-accent) focus:opacity-100 group-hover:opacity-100 ' + (menuFor === t.id ? 'opacity-100 text-(--ui-accent)' : ''),
                   children: '\u22EF'
                 }),
-                menuFor === t.id && jsxs(Fragment, { children: [
-                  jsx('div', { className: 'fixed inset-0 z-20', onClick: () => setMenuFor(null), 'aria-hidden': 'true' }),
-                  jsx('div', { role: 'menu', className: 'ao-in absolute right-0 z-30 w-48 overflow-hidden rounded-lg border border-(--ui-stroke-secondary) bg-[rgba(10,14,20,0.96)] shadow-xl backdrop-blur-md ' + (i >= d.tasks.length - 2 ? 'bottom-full mb-1' : 'top-full mt-1'), style: { animationDuration: '180ms' },
+                menuFor === t.id && jsx('div', { role: 'menu', className: 'ao-in absolute right-0 z-30 w-48 overflow-hidden rounded-lg border border-(--ui-stroke-secondary) bg-[rgba(10,14,20,0.96)] shadow-xl backdrop-blur-md ' + (i >= d.tasks.length - 2 ? 'bottom-full mb-1' : 'top-full mt-1'), style: { animationDuration: '180ms' },
                     children: extraActions.map(x => jsxs('button', {
                       type: 'button', role: 'menuitem',
                       title: x.title,
@@ -1851,7 +1860,6 @@ function TodosCard() {
                       ]
                     }, x.label))
                   })
-                ] })
               ] })
             ]
           }, t.id)
