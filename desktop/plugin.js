@@ -3574,12 +3574,161 @@ function NeuralCore({ onOpenSpotlight }) {
 
 // ------------------------------------------------------------ customizable widget grid
 
+// ------------------------------------------------------------ automation (self-healing) + memory cards
+
+const REM_KIND = {
+  auto_fixed:      { icon: '✓', color: '#3fb950' },
+  approved_fixed:  { icon: '✓', color: '#3fb950' },
+  recovered:       { icon: '↻', color: '#3fb950' },
+  auto_failed:     { icon: '✕', color: '#f5495b' },
+  approved_failed: { icon: '✕', color: '#f5495b' },
+  denied:          { icon: '–', color: '#64748b' }
+}
+
+function AutomationCard() {
+  const q = useQuery({
+    queryKey: ['agentos', 'remediation'],
+    queryFn: () => REST('/remediation'),
+    refetchInterval: 60000
+  })
+  const [busy, setBusy] = useState('')
+  const d = q.data
+  const pending = (d && d.pending) || []
+  const events = (d && d.events) || []
+  const enabled = !!(d && d.enabled)
+
+  async function act(path, body, tag) {
+    setBusy(tag)
+    try {
+      await REST(path, { method: 'POST', body })
+      await q.refetch()
+    } catch (e) { /* card shows next poll's truth */ }
+    setBusy('')
+  }
+
+  return jsx(AoCard, {
+    label: 'automation - self-healing',
+    delay: 150,
+    right: jsxs('button', {
+      type: 'button',
+      onClick: () => act('/remediation/config', { enabled: !enabled }, 'toggle'),
+      title: 'Auto-fix allowlisted services without asking',
+      className: 'ao-runbtn',
+      style: { color: enabled ? '#3fb950' : 'var(--ui-text-quaternary)' },
+      children: ['AUTO-FIX ', enabled ? 'ON' : 'OFF']
+    }),
+    children: jsxs('div', { className: 'flex flex-col gap-2 overflow-y-auto', children: [
+      q.isLoading && jsx(Skel, { h: '5rem' }),
+      q.error && jsx('div', { className: 'text-xs text-(--ui-text-secondary)', children: 'automation feed offline' }),
+      pending.length > 0 && jsx('div', { className: 'ao-label text-[#f5495b]', children: 'awaiting approval' }),
+      pending.map((p, i) => jsxs('div', {
+        className: 'ao-in rounded-md border border-[#f5495b]/30 bg-[#f5495b]/5 px-2.5 py-2',
+        style: { animationDelay: i * 40 + 'ms' },
+        children: [
+          jsxs('div', { className: 'flex items-center gap-2 text-xs', children: [
+            jsx('span', { style: { color: '#f5495b' }, children: '●' }),
+            jsx('span', { className: 'font-semibold truncate', children: p.service + ' is down' }),
+            jsx('span', { className: 'ml-auto shrink-0 font-mono text-[10px] text-(--ui-text-quaternary)', children: fmtAgo(p.created) })
+          ] }),
+          p.detail && jsx('div', { className: 'mt-0.5 truncate font-mono text-[10px] text-(--ui-text-quaternary)', children: p.detail }),
+          jsxs('div', { className: 'mt-1.5 flex items-center gap-1.5', children: [
+            jsx('button', {
+              type: 'button', className: 'ao-btn', disabled: busy !== '',
+              onClick: () => act('/remediation/approve', { id: p.id }, 'app' + p.id),
+              children: busy === 'app' + p.id ? 'fixing…' : 'APPROVE'
+            }),
+            jsx('button', {
+              type: 'button', className: 'ao-btn', disabled: busy !== '',
+              onClick: () => act('/remediation/deny', { id: p.id }, 'deny' + p.id),
+              children: 'DENY'
+            }),
+            jsx('span', { className: 'ml-auto font-mono text-[10px] text-(--ui-text-quaternary)', children: p.cmd ? 'restart cmd ready' : 'agent will diagnose' })
+          ] })
+        ]
+      }, p.id)),
+      jsx('div', { className: 'ao-label', children: 'activity' }),
+      jsx('div', { className: 'space-y-1.5', children: events.length ? events.slice(0, 8).map((ev, i) =>
+        jsxs('div', { className: 'flex items-center gap-2 min-w-0 text-xs ao-in', style: { animationDelay: i * 40 + 'ms' }, children: [
+          jsx('span', { className: 'shrink-0', style: { color: (REM_KIND[ev.kind] || {}).color || '#64748b' }, children: (REM_KIND[ev.kind] || {}).icon || '•' }),
+          jsx('span', { className: 'truncate text-(--ui-text-secondary)', title: ev.detail, children: ev.service }),
+          jsx('span', { className: 'truncate font-mono text-[10px] text-(--ui-text-quaternary)', children: ev.kind.replace('_', ' ') }),
+          jsx('span', { className: 'ml-auto shrink-0 font-mono text-[10px] text-(--ui-text-quaternary)', children: fmtAgo(ev.at) })
+        ] }, ev.id)
+      ) : jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'no events yet — scanner runs every 5 min' }) })
+    ] })
+  })
+}
+
+function MemoryCard() {
+  const q = useQuery({
+    queryKey: ['agentos', 'memfacts'],
+    queryFn: () => REST('/memfacts'),
+    refetchInterval: 120000
+  })
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const d = q.data
+  const facts = (d && d.facts) || []
+
+  async function add() {
+    const t = text.trim()
+    if (!t || busy) return
+    setBusy(true)
+    try {
+      await REST('/memfacts', { method: 'POST', body: { text: t } })
+      setText('')
+      await q.refetch()
+    } catch (e) { /* next poll shows truth */ }
+    setBusy(false)
+  }
+  async function drop(id) {
+    if (busy) return
+    setBusy(true)
+    try { await REST('/memfacts', { method: 'DELETE', body: { id } }); await q.refetch() } catch (e) { /* ignore */ }
+    setBusy(false)
+  }
+
+  return jsx(AoCard, {
+    label: 'memory - jarvis remembers',
+    delay: 160,
+    right: jsx('span', { className: 'text-xs text-(--ui-text-quaternary)', children: (d && d.total || 0) + ' facts' }),
+    children: jsxs('div', { className: 'flex flex-col gap-2 min-h-0', children: [
+      jsxs('div', { className: 'flex items-center gap-1.5', children: [
+        jsx('input', {
+          value: text,
+          onChange: e => setText(e.target.value),
+          onKeyDown: e => { if (e.key === 'Enter') add() },
+          placeholder: 'remember that…',
+          className: 'min-w-0 flex-1 rounded-md border border-(--ui-border) bg-transparent px-2.5 py-1.5 text-xs text-(--ui-text-primary) outline-none placeholder:text-(--ui-text-quaternary) focus:border-(--ui-accent)',
+          spellCheck: false
+        }),
+        jsx('button', { type: 'button', className: 'ao-btn', onClick: add, disabled: busy, children: busy ? '…' : 'ADD' })
+      ] }),
+      jsx('div', { className: 'flex-1 space-y-1.5 overflow-y-auto', children: facts.length ? facts.slice(0, 12).map((f, i) =>
+        jsxs('div', { className: 'group flex items-center gap-2 min-w-0 text-xs ao-in', style: { animationDelay: i * 30 + 'ms' }, children: [
+          jsx('span', { className: 'shrink-0 text-(--ui-accent)', children: '◆' }),
+          jsx('span', { className: 'min-w-0 flex-1 truncate text-(--ui-text-secondary)', title: f.text, children: f.text }),
+          jsx('button', {
+            type: 'button',
+            onClick: () => drop(f.id),
+            title: 'Forget this',
+            className: 'shrink-0 text-[10px] text-(--ui-text-quaternary) opacity-0 transition-opacity group-hover:opacity-100 hover:text-[#f5495b]',
+            children: '✕'
+          })
+        ] }, f.id)
+      ) : jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'nothing stored yet — say "remember that…" to JARVIS or add above' }) })
+    ] })
+  })
+}
+
 const WIDGETS = {
   hero:    { title: 'Jarvis',        span: 12, rows: 1, render: p => jsx(HeroWidget, p) },
   advisor: { title: 'Advisor',       span: 4,  rows: 5, render: () => jsx(AdvisorCard, {}) },
   todos:   { title: 'Today',         span: 6,  rows: 4, render: () => jsx(TodosCard, {}) },
   brief:   { title: 'Brief',         span: 8,  rows: 4, render: () => jsx(BriefCard, {}) },
   status:  { title: 'Status',        span: 4,  rows: 5, render: () => jsx(StatusCard, {}) },
+  automation: { title: 'Automation', span: 4,  rows: 4, render: () => jsx(AutomationCard, {}) },
+  memory:  { title: 'Memory',        span: 4,  rows: 4, render: () => jsx(MemoryCard, {}) },
   metrics: { title: 'Metrics',       span: 4,  rows: 4, render: () => jsx(MetricsCard, {}) },
   quotes:  { title: 'Tickers',       span: 8,  rows: 4, render: () => jsx(QuotesCard, {}) },
   galaxy:  { title: 'Neural core',   span: 8,  rows: 5, render: p => jsx(NeuralCore, p) },
@@ -3589,7 +3738,7 @@ const WIDGETS = {
   releases:{ title: 'Release board',  span: 6, rows: 4, render: () => jsx(ReleasesCard, {}) }
 }
 
-const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'todos', 'brief', 'status', 'metrics', 'quotes', 'agents', 'releases', 'console']
+const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'todos', 'brief', 'status', 'automation', 'memory', 'metrics', 'quotes', 'agents', 'releases', 'console']
 
 function defaultSizes() {
   const sizes = {}
