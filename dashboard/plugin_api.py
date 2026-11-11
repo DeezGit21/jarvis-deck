@@ -1007,12 +1007,22 @@ def connectors_connect(body: dict = Body(...)):
 
 _TTS_CACHE_TTL = 7 * 86400  # a week of voice lines is plenty; prune lazily
 
+_TTS_GEMINI_MODEL = "gemini-2.5-flash-preview-tts"
+_TTS_GEMINI_STYLE = (
+    "You are JARVIS, the composed British AI butler from the Iron Man films. "
+    "Speak with a refined, calm, articulate British RP accent: measured pace, "
+    "warm confidence, dry understated wit, precise enunciation. Read naturally:\n\n"
+)
 
-def _tts_cfg() -> tuple[str, str]:
+
+def _tts_cfg() -> dict:
     tts_cfg = _CFG.get("tts") if isinstance(_CFG.get("tts"), dict) else {}
-    voice = str(tts_cfg.get("voice") or "en-GB-RyanNeural")
-    rate = str(tts_cfg.get("rate") or "+4%")
-    return voice, rate
+    return {
+        "provider": str(tts_cfg.get("provider") or "gemini").strip().lower(),
+        "voice": str(tts_cfg.get("voice") or "en-GB-RyanNeural"),
+        "rate": str(tts_cfg.get("rate") or "+4%"),
+        "gemini_voice": str(tts_cfg.get("gemini_voice") or "Charon"),
+    }
 
 
 def _tts_stream(text: str, voice: str, rate: str):
@@ -1046,8 +1056,65 @@ def _tts_stream(text: str, voice: str, rate: str):
     return _gen
 
 
-def _tts_audio_response(text: str):
-    voice, rate = _tts_cfg()
+def _tts_gemini_wav(text: str, voice: str) -> bytes:
+    """Synthesize via Gemini TTS (style-prompted JARVIS) -> full WAV bytes."""
+    import base64 as _base64
+    import io as _io
+    import json as _json
+    import urllib.request as _urllib
+    import wave as _wave
+    from pathlib import Path as _Path
+
+    import os as _os
+    key = _os.environ.get("GEMINI_API_KEY")
+    if not key:
+        env_file = _Path.home() / ".hermes" / "agentos" / ".env"
+        if env_file.exists():
+            for line in env_file.read_text(encoding="utf-8").splitlines():
+                if line.startswith("GEMINI_API_KEY"):
+                    key = line.split("=", 1)[1].strip().strip('"')
+                    break
+    if not key:
+        raise RuntimeError("no GEMINI_API_KEY in agentos .env")
+    body = _json.dumps({
+        "contents": [{"parts": [{"text": _TTS_GEMINI_STYLE + text}]}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
+        },
+    }).encode("utf-8")
+    req = _urllib.Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{_TTS_GEMINI_MODEL}:generateContent?key={key}",
+        data=body, headers={"Content-Type": "application/json"})
+    with _urllib.urlopen(req, timeout=120) as resp:
+        r = _json.load(resp)
+    pcm = _base64.b64decode(r["candidates"][0]["content"]["parts"][0]["inlineData"]["data"])
+    buf = _io.BytesIO()
+    with _wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(pcm)
+    return buf.getvalue()
+
+
+def _tts_audio_response(text: str, force_provider: str | None = None):
+    cfg = _tts_cfg()
+    provider = force_provider or cfg["provider"]
+    if provider == "gemini":
+        import hashlib as _hashlib
+        gkey = _hashlib.sha1((provider + "|" + cfg["gemini_voice"] + "|" + text).encode("utf-8")).hexdigest()[:16]
+        CACHE.mkdir(parents=True, exist_ok=True)
+        gout = CACHE / f"tts-{gkey}.wav"
+        if gout.exists() and gout.stat().st_size > 0:
+            return Response(content=gout.read_bytes(), media_type="audio/wav")
+        try:
+            wav = _tts_gemini_wav(text, cfg["gemini_voice"])
+            gout.write_bytes(wav)
+            return Response(content=wav, media_type="audio/wav")
+        except Exception:
+            pass  # fall through to edge-tts
+    voice, rate = cfg["voice"], cfg["rate"]
     import hashlib as _hashlib
     key = _hashlib.sha1((voice + "|" + rate + "|" + text).encode("utf-8")).hexdigest()[:16]
     CACHE.mkdir(parents=True, exist_ok=True)
@@ -1062,7 +1129,7 @@ def _tts_audio_response(text: str):
     # Prune stale cache entries lazily (best-effort).
     try:
         now = time.time()
-        for f in CACHE.glob("tts-*.mp3"):
+        for f in CACHE.glob("tts-*.mp3") if hasattr(CACHE, "glob") else []:
             if now - f.stat().st_mtime > _TTS_CACHE_TTL:
                 f.unlink(missing_ok=True)
     except OSError:
@@ -1070,16 +1137,59 @@ def _tts_audio_response(text: str):
     return StreamingResponse(_tts_stream(text, voice, rate)(), media_type="audio/mpeg")
 
 
+# Near-instant verbal acks for briefs/actions: short edge-tts lines, pre-warmed
+# at startup so the browser gets cache-speed audio (single-digit ms) the moment
+# D clicks — the slower styled reply (Gemini) follows when it's ready.
+_TTS_ACK_PHRASES = [
+    "Generating brief now, sir",
+    "Right away, sir",
+    "On it, sir",
+    "At once, sir",
+    "Working on it now, sir",
+]
+
+
+def _tts_prewarm_acks() -> None:
+    import asyncio as _asyncio
+
+    def _run():
+        for phrase in _TTS_ACK_PHRASES:
+            try:
+                cfg = _tts_cfg()
+                key = _hashlib.sha1((cfg["voice"] + "|" + cfg["rate"] + "|" + phrase).encode("utf-8")).hexdigest()[:16]
+                out = CACHE / f"tts-{key}.mp3"
+                if out.exists() and out.stat().st_size > 0:
+                    continue
+                tmp = out.with_suffix(".mp3.part")
+                async def _gen():
+                    import edge_tts
+                    comm = edge_tts.Communicate(phrase, cfg["voice"], rate=cfg["rate"])
+                    with open(tmp, "wb") as fh:
+                        async for chunk in comm.stream():
+                            if chunk["type"] == "audio":
+                                fh.write(chunk["data"])
+                _asyncio.run(_gen())
+                tmp.rename(out)
+            except Exception:
+                pass
+
+    threading.Thread(target=_run, name="tts-prewarm", daemon=True).start()
+
+
+_tts_prewarm_acks()
+
+
 @router.get("/tts")
-def tts_get(text: str = ""):
+def tts_get(text: str = "", ack: str = ""):
     """Streaming neural TTS — the browser <audio> element starts playing as
-    chunks arrive (first sound in well under a second for short lines)."""
+    chunks arrive (first sound in well under a second for short lines).
+    ack=1 forces the fast edge-tts provider (instant pre-warmed acknowledgements)."""
     text = (text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="text required")
     if len(text) > 4000:
         raise HTTPException(status_code=413, detail="text too long for one utterance")
-    return _tts_audio_response(text)
+    return _tts_audio_response(text, force_provider="edge" if ack else None)
 
 
 @router.post("/tts")
