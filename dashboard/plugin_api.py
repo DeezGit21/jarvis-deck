@@ -135,6 +135,17 @@ STATUS_SQL = (
     "WHERE deleted_at IS NULL GROUP BY status ORDER BY count(*) DESC;"
 )
 
+# Daily collected revenue for the last 30 days (deck ribbon sparkline).
+# Day boundaries are Phoenix-local to match how D reads the business.
+REVENUE_SERIES_SQL = """
+SELECT to_char(d.day, 'YYYY-MM-DD') AS day, COALESCE(SUM(j.amount_paid), 0) AS revenue
+FROM generate_series(current_date - 29, current_date, interval '1 day') AS d(day)
+LEFT JOIN jobs j
+  ON (j.created_at AT TIME ZONE 'America/Phoenix')::date = d.day::date
+ AND j.deleted_at IS NULL
+GROUP BY d.day ORDER BY d.day;
+"""
+
 
 @router.get("/metrics")
 def metrics():
@@ -142,7 +153,15 @@ def metrics():
     cols = ["leads_week", "jobs_week", "revenue_mtd", "jobs_today"]
     data = dict(zip(cols, hdr))
     by_status = [{"status": r[0], "count": int(r[1]), "total_price": float(r[2])} for r in _psql(STATUS_SQL)]
-    return {"date": _local_date(), **data, "revenue_mtd": float(data["revenue_mtd"]), "jobs_by_status": by_status}
+    try:
+        rev_rows = _psql(REVENUE_SERIES_SQL)
+        revenue_series = [float(r[1]) for r in rev_rows]
+        revenue_series_dates = [r[0] for r in rev_rows]
+    except HTTPException:
+        revenue_series, revenue_series_dates = [], []  # sparkline is best-effort
+    return {"date": _local_date(), **data, "revenue_mtd": float(data["revenue_mtd"]),
+            "jobs_by_status": by_status,
+            "revenue_series": revenue_series, "revenue_series_dates": revenue_series_dates}
 
 
 # ---------------------------------------------------------------- status
