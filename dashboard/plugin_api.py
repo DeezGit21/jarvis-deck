@@ -1253,12 +1253,36 @@ def money_summary():
 WEBULL_LOGIN_FLAG = CACHE / "webull-login-launched.json"
 
 
-def _launch_webull_login() -> dict:
+def _launch_webull_login(silent: bool = False) -> dict:
+    """Launch webull_login.py.
+
+    silent=True (auto-remediation): no console window — output goes to a log
+    file and the Telegram notice points D at the deck's reconnect button.
+    silent=False (D clicked reconnect): a visible console opens so he can type
+    the MFA code — that step cannot be automated.
+    """
     script = AGENTOS / "scripts" / "webull_login.py"
     if not script.exists():
         return {"launched": False, "detail": "webull_login.py not installed"}
     if not MONEY_VENV_PY.exists():
         return {"launched": False, "detail": "agentos venv missing"}
+    if silent:
+        log = CACHE / "webull-login-silent.log"
+        CACHE.mkdir(parents=True, exist_ok=True)
+        flags = 0x00000008 | 0x00000200 | 0x08000000  # detached, no window
+        try:
+            with open(log, "ab") as fh:
+                subprocess.Popen(
+                    [str(MONEY_VENV_PY), str(script)],
+                    creationflags=flags, cwd=str(AGENTOS),
+                    stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                )
+        except OSError as e:
+            return {"launched": False, "detail": str(e)[:200]}
+        WEBULL_LOGIN_FLAG.write_text(json.dumps({"ts": time.time()}), encoding="utf-8")
+        return {"launched": True, "silent": True,
+                "detail": "Login retry running silently — click 'reconnect webull' "
+                          "in the Money tab when you're ready to type the MFA code."}
     CREATE_NEW_CONSOLE = 0x00000010
     try:
         subprocess.Popen(
@@ -2002,15 +2026,15 @@ def _remediation_scan(manual: bool = False) -> dict:
         if wsnap.exists() and not launched_recently:
             wdata = json.loads(wsnap.read_text(encoding="utf-8"))
             if wdata.get("state") == "reauth_needed" and len(auto_last_hour) < max_hour:
-                res = _launch_webull_login()
+                res = _launch_webull_login(silent=True)
                 kind = "auto_fixed" if res.get("launched") else "auto_failed"
                 _rem_event(state, kind, "webull-session",
-                           res.get("detail") or "webull login console opened")
+                           res.get("detail") or "webull login retry launched silently")
                 auto_last_hour.append({"kind": kind, "ts_epoch": now})
                 actions.append({"service": "webull-session",
                                 "result": "login_launched" if res.get("launched") else "launch_failed"})
-                _tg_notify("📈 Webull session expired — I opened the login window on your desktop. "
-                           "Type the MFA code there; positions refresh right after.")
+                _tg_notify("📈 Webull session expired — retried the login silently. "
+                           "If it still needs MFA, click 'reconnect webull' in the deck's Money tab.")
     except Exception:  # noqa: BLE001 — the money scan must never break the service scan
         pass
     if actions:
