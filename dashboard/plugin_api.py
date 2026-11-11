@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Response
 
 router = APIRouter()
 
@@ -996,6 +996,96 @@ def connectors_connect(body: dict = Body(...)):
     _HOSTED_CACHE["at"] = 0.0  # state may change after the user finishes OAuth
     _HOSTED_CACHE["rows"] = None
     return {"ok": True, "name": name, "url": url}
+
+
+# ---------------------------------------------------------------- tts (JARVIS voice)
+
+_TTS_CACHE_TTL = 7 * 86400  # a week of voice lines is plenty; prune lazily
+
+
+def _tts_cfg() -> tuple[str, str]:
+    tts_cfg = _CFG.get("tts") if isinstance(_CFG.get("tts"), dict) else {}
+    voice = str(tts_cfg.get("voice") or "en-GB-RyanNeural")
+    rate = str(tts_cfg.get("rate") or "+4%")
+    return voice, rate
+
+
+def _tts_stream(text: str, voice: str, rate: str):
+    """Async generator: edge-tts chunks as they arrive, teed to a cache file."""
+    import asyncio as _asyncio
+    import edge_tts
+
+    async def _gen():
+        comm = edge_tts.Communicate(text, voice, rate=rate)
+        tmp = CACHE / f"tts-{_hashlib.sha1((voice + '|' + rate + '|' + text).encode('utf-8')).hexdigest()[:16]}.mp3.part"
+        CACHE.mkdir(parents=True, exist_ok=True)
+        first = True
+        try:
+            with open(tmp, "wb") as fh:
+                async for chunk in comm.stream():
+                    if chunk["type"] == "audio":
+                        if first:
+                            first = False
+                            yield chunk["data"]  # header bytes go out immediately
+                        else:
+                            yield chunk["data"]
+                        fh.write(chunk["data"])
+            tmp.rename(tmp.with_suffix(""))
+        except Exception:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+
+    return _gen
+
+
+def _tts_audio_response(text: str):
+    voice, rate = _tts_cfg()
+    import hashlib as _hashlib
+    key = _hashlib.sha1((voice + "|" + rate + "|" + text).encode("utf-8")).hexdigest()[:16]
+    CACHE.mkdir(parents=True, exist_ok=True)
+    out = CACHE / f"tts-{key}.mp3"
+    if out.exists() and out.stat().st_size > 0:
+        return Response(content=out.read_bytes(), media_type="audio/mpeg")
+    try:
+        import edge_tts  # noqa: F401 — availability check before streaming starts
+    except ImportError:
+        raise HTTPException(status_code=501, detail="edge-tts not installed in the agentos venv") from None
+    from fastapi.responses import StreamingResponse
+    # Prune stale cache entries lazily (best-effort).
+    try:
+        now = time.time()
+        for f in CACHE.glob("tts-*.mp3"):
+            if now - f.stat().st_mtime > _TTS_CACHE_TTL:
+                f.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return StreamingResponse(_tts_stream(text, voice, rate)(), media_type="audio/mpeg")
+
+
+@router.get("/tts")
+def tts_get(text: str = ""):
+    """Streaming neural TTS — the browser <audio> element starts playing as
+    chunks arrive (first sound in well under a second for short lines)."""
+    text = (text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text required")
+    if len(text) > 4000:
+        raise HTTPException(status_code=413, detail="text too long for one utterance")
+    return _tts_audio_response(text)
+
+
+@router.post("/tts")
+def tts(body: dict = Body(...)):
+    """POST variant returning the full mp3 (used as a compatibility fallback)."""
+    text = str(body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text required")
+    if len(text) > 4000:
+        raise HTTPException(status_code=413, detail="text too long for one utterance")
+    return _tts_audio_response(text)
 
 
 # ---------------------------------------------------------------- money

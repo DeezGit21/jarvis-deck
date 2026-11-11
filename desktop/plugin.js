@@ -658,26 +658,51 @@ const Tts = {
     } catch { return 1.05 }
   },
   speak(text, onEnd) {
-    if (!this.on() || !this.supported) return false
+    if (!this.on()) return false
+    const clean = String(text)
+      .replace(/```[\s\S]*?```/g, ' code block. ')
+      .replace(/\*\*|__|`|#+\s?/g, '')
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .slice(0, 1200)
+    this.stop()
+    OrbBus.set('speaking')
+    this._speakAsync(clean, onEnd)
+    return true
+  },
+  // Neural voice via the backend /tts endpoint (edge-tts, British male);
+  // falls back to browser speechSynthesis when the endpoint is missing.
+  async _speakAsync(clean, onEnd) {
+    const done = () => {
+      if (OrbBus.state === 'speaking') OrbBus.set('idle')
+      if (onEnd) { try { onEnd() } catch { /* ignore */ } }
+    }
     try {
-      window.speechSynthesis.cancel()
-      const clean = String(text)
-        .replace(/```[\s\S]*?```/g, ' code block. ')
-        .replace(/\*\*|__|`|#+\s?/g, '')
-        .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-        .slice(0, 1200)
+      // Streaming GET: the browser's audio element buffers and starts playing
+      // as edge-tts chunks arrive — first sound well under a second.
+      const url = '/api/plugins/agentos/tts?text=' + encodeURIComponent(clean)
+      const audio = new Audio(url)
+      this._audio = audio
+      audio.onended = done
+      audio.onerror = () => this._fallbackSpeak(clean, done)
+      await audio.play()
+      return
+    } catch { /* endpoint unavailable — use the browser voice */ }
+    this._fallbackSpeak(clean, done)
+  },
+  _fallbackSpeak(clean, done) {
+    if (!this.supported) { done(); return }
+    try {
       const u = new SpeechSynthesisUtterance(clean)
       u.rate = this.rate()
-      const done = () => {
-        if (OrbBus.state === 'speaking') OrbBus.set('idle')
-        if (onEnd) { try { onEnd() } catch { /* ignore */ } }
-      }
       u.onend = done
       u.onerror = done
       window.speechSynthesis.speak(u)
-      OrbBus.set('speaking')
-      return true
-    } catch { return false }
+    } catch { done() }
+  },
+  stop() {
+    try { if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel() } catch { /* ignore */ }
+    if (this._audio) { try { this._audio.pause(); this._audio.removeAttribute('src') } catch { /* ignore */ } this._audio = null }
+    if (this._audioUrl) { try { URL.revokeObjectURL(this._audioUrl) } catch { /* ignore */ } this._audioUrl = null }
   }
 }
 
@@ -1467,7 +1492,7 @@ function BriefCard() {
   }
 
   function stopSpeech() {
-    try { if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel() } catch { /* ignore */ }
+    Tts.stop()
     setSpeakingNow(false)
     if (OrbBus.state === 'speaking') OrbBus.set('idle')
   }
