@@ -2372,16 +2372,38 @@ function GoalsCard() {
 
 // ------------------------------------------------------------ money
 
-function MoneyConnector({ name, data, onRefresh, delay = 0 }) {
+function MoneyConnector({ name, data, onRefresh, refreshing, delay = 0 }) {
   const configured = data && data.configured
   const state = data && data.state
   const stateColor = !configured ? 'var(--ui-text-quaternary)' : state === 'ok' ? '#3fb950' : '#d29922'
+  const [fixBusy, setFixBusy] = useState(false)
+  const [fixMsg, setFixMsg] = useState(null)
+  async function reconnectWebull() {
+    setFixBusy(true)
+    setFixMsg(null)
+    try {
+      const r = await REST('/money/webull/login', { method: 'POST', body: {} })
+      setFixMsg(r && r.launched ? 'Login window opened — type the MFA code there.' : 'Could not open login: ' + ((r && r.detail) || 'unknown'))
+      onRefresh()
+    } catch (e) {
+      setFixMsg('Reconnect failed: ' + ((e && e.message) || e))
+    } finally {
+      setFixBusy(false)
+    }
+  }
   return jsx(AoCard, {
     label: name,
     delay,
     right: jsxs('div', { className: 'flex items-center gap-3', children: [
       jsx(Led, { up: configured ? (state === 'ok' ? true : null) : null }),
-      jsx('button', { type: 'button', className: 'text-xs text-(--ui-accent)', onClick: onRefresh, children: 'Refresh' })
+      jsx('button', {
+        type: 'button',
+        className: 'ao-btn text-xs text-(--ui-accent)',
+        onClick: onRefresh,
+        disabled: refreshing,
+        title: 'Refetch now',
+        children: refreshing ? jsx(RingSpin, { size: 12 }) : 'Refresh'
+      })
     ] }),
     children: jsxs(Fragment, {
       children: [
@@ -2395,7 +2417,18 @@ function MoneyConnector({ name, data, onRefresh, delay = 0 }) {
             'State: ',
             state
           ] }),
-          data.detail && jsx('div', { className: 'mt-1 text-xs text-(--ui-text-tertiary)', children: data.detail })
+          data.detail && jsx('div', { className: 'mt-1 text-xs text-(--ui-text-tertiary)', children: data.detail }),
+          state === 'reauth_needed' && jsxs(Fragment, { children: [
+            jsx('button', {
+              type: 'button',
+              className: 'ao-btn mt-2',
+              'data-kind': 'run',
+              onClick: reconnectWebull,
+              disabled: fixBusy,
+              children: fixBusy ? 'opening login…' : '⚙ reconnect webull'
+            }),
+            fixMsg && jsx('div', { className: 'mt-1 text-xs text-(--ui-text-secondary)', children: fixMsg })
+          ] })
         ] }),
         data && configured && state === 'ok' && jsx('div', { className: 'mt-1 space-y-0.5', children:
           String(data.render || '').split('\n').map((line, i) =>
@@ -2418,14 +2451,14 @@ function MoneySection() {
     queryFn: () => REST('/money/summary')
   })
   const d = q.data
-  const refresh = () => qc.invalidateQueries({ queryKey: ['agentos', 'money'] })
+  const refresh = () => { qc.invalidateQueries({ queryKey: ['agentos', 'money'] }); q.refetch() }
   return jsxs('div', { className: 'flex flex-col gap-3', children: [
     q.error && jsx('div', { className: 'text-sm text-(--ui-text-secondary)', children: q.error.message }),
     jsx('div', { className: 'grid grid-cols-1 gap-3', children: [
       jsx(QuotesCard, {}),
-      jsx(MoneyConnector, { name: 'stripe — balance & payouts', data: d && d.stripe, onRefresh: refresh, delay: 40 }),
-      jsx(MoneyConnector, { name: 'webull — positions', data: d && d.stocks, onRefresh: refresh, delay: 120 }),
-      jsx(MoneyConnector, { name: 'banks (plaid) — balances & transactions', data: d && d.banks, onRefresh: refresh, delay: 200 })
+      jsx(MoneyConnector, { name: 'stripe — balance & payouts', data: d && d.stripe, onRefresh: refresh, refreshing: q.isFetching, delay: 40 }),
+      jsx(MoneyConnector, { name: 'webull — positions', data: d && d.stocks, onRefresh: refresh, refreshing: q.isFetching, delay: 120 }),
+      jsx(MoneyConnector, { name: 'banks (plaid) — balances & transactions', data: d && d.banks, onRefresh: refresh, refreshing: q.isFetching, delay: 200 })
     ] }),
     jsx('div', {
       className: 'ao-in text-xs text-(--ui-text-quaternary)',
