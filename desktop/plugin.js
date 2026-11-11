@@ -106,6 +106,24 @@ const CSS = `
   color: var(--ui-text-tertiary); }
 .ao-press { transition: color .25s cubic-bezier(.23,1,.32,1), transform .25s cubic-bezier(.23,1,.32,1), border-color .25s cubic-bezier(.23,1,.32,1), box-shadow .25s cubic-bezier(.23,1,.32,1); }
 .ao-press:active { transform: scale(.97); }
+.ao-btn { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 8px;
+  border: 1px solid var(--ui-stroke-secondary);
+  font: 500 0.7rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+  transition: transform .15s cubic-bezier(.23,1,.32,1), border-color .2s, color .2s;
+  background: color-mix(in srgb, var(--ui-card) 80%, transparent); }
+.ao-btn:active { transform: scale(.97); }
+.ao-btn:hover { border-color: var(--ui-accent); color: var(--ui-accent); }
+.ao-btn[data-kind='run']:hover { border-color: #a855f7; color: #a855f7; }
+.ao-btn[data-kind='restart']:hover { border-color: #ffb84d; color: #ffb84d; }
+.ao-btn[data-kind='delegate']:hover { border-color: #5cd6ff; color: #5cd6ff; }
+.ao-btn:disabled { opacity: .4; pointer-events: none; }
+.ao-mini-term { font: 400 .65rem/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: rgba(0,0,0,.45); border-radius: 4px; padding: 3px 6px; margin-top: 4px;
+  max-height: 5.4rem; overflow-y: auto; white-space: pre-wrap; word-break: break-all; color: #5cd6ff; }
+.ao-mini-term::-webkit-scrollbar { width: 4px; }
+.ao-mini-term::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ui-accent) 20%, transparent); border-radius: 2px; }
 
 /* --- spotlight command runner --- */
 .ao-spot-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: flex-start;
@@ -1719,8 +1737,16 @@ function TodosCard() {
         q.isLoading && jsx(Skel, { h: '.9rem' }),
         q.error && jsx('div', { className: 'mt-2 text-sm text-(--ui-text-secondary)', children: q.error.message }),
         d && d.tasks.length === 0 && plannerRows.length === 0 && jsx('div', { className: 'py-2 text-sm text-(--ui-text-tertiary)', children: 'No open tasks.' }),
-        d && jsx('div', { className: 'space-y-1', children: d.tasks.map((t, i) =>
-          jsxs('div', {
+        d && jsx('div', { className: 'space-y-1', children: d.tasks.map((t, i) => {
+    const txt2 = (t.title || '').toLowerCase()
+    const hasScript2 = /\.py\b|run\s|script/.test(txt2)
+    const hasDown2 = /down|port|refused|502|winerror/.test(txt2)
+    const kind2 = hasScript2 ? 'run' : hasDown2 ? 'restart' : 'delegate'
+    const label2 = kind2 === 'run' ? '\u26A1' : kind2 === 'restart' ? '\uD83D\uDD04' : '\uD83E\uDD16'
+    const cmd2 = kind2 === 'run' ? 'run python ' + (t.title.match(/([\w_.-]+\.py)/)?.[1] || 'script')
+      : kind2 === 'restart' ? 'restart service ' + (t.title.match(/['\u2018\u2019]([^'\u2018\u2019]+)['\u2018\u2019]/)?.[1] || 'unknown')
+      : t.title
+    return jsxs('div', {
             className: 'ao-in flex items-baseline gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
             style: { animationDelay: 240 + i * 70 + 'ms' },
             children: [
@@ -1731,16 +1757,24 @@ function TodosCard() {
               jsx('span', { className: 'min-w-0 flex-1 text-(--ui-text-secondary)', children: t.title }),
               jsx('button', {
                 type: 'button',
+                className: 'ao-btn',
+                'data-kind': kind2,
+                onClick: () => { ConsoleStore.send(cmd2) },
+                title: cmd2,
+                children: label2
+              }),
+              jsx('button', {
+                type: 'button',
                 disabled: doneId === t.id,
                 onClick: () => complete(t),
                 title: 'Mark done (syncs to Telegram)',
                 'aria-label': 'Complete: ' + t.title,
                 className: 'shrink-0 rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary) transition-colors hover:border-[#3fb950] hover:text-[#3fb950] disabled:opacity-40',
-                children: doneId === t.id ? '…' : '✓'
+                children: doneId === t.id ? '\u2026' : '\u2713'
               })
             ]
           }, t.id)
-        ) }),
+          })}),
         jsx('div', {
           className: 'mt-2 flex items-center gap-1.5',
           children: [
@@ -1780,23 +1814,56 @@ const TIER_STYLE = {
 
 function ActionRow({ a, busy, onDone, onKill }) {
   const tier = TIER_STYLE[a.tier] || TIER_STYLE[3]
+  const [cmdBusy, setCmdBusy] = useState(false)
+  const [, force] = useState(0)
+  useEffect(() => {
+    if (!cmdBusy) return undefined
+    return ConsoleStore.subscribe(() => force(v => v + 1))
+  }, [cmdBusy])
+  const txt = (a.text || '').toLowerCase()
+  const hasScript = /\.py\b|run\s|script/.test(txt)
+  const hasDown = /down|port|refused|502|winerror/.test(txt)
+  const kind = hasScript ? 'run' : hasDown ? 'restart' : 'delegate'
+  const label = kind === 'run' ? '\u26A1 RUN SCRIPT' : kind === 'restart' ? '\uD83D\uDD04 RESTART' : '\uD83E\uDD16 DELEGATE'
+  const cmd = kind === 'run' ? 'run python ' + (a.text.match(/([\w_.-]+\.py)/)?.[1] || 'script')
+    : kind === 'restart' ? 'restart service ' + (a.text.match(/['\u2018\u2019]([^'\u2018\u2019]+)['\u2018\u2019]/)?.[1] || 'unknown')
+    : a.text
+  const recentMsgs = ConsoleStore.msgs.filter(m => m.role === 'jarvis').slice(-3)
+  const lastReply = recentMsgs.length > 0 ? recentMsgs[recentMsgs.length - 1].text : ''
+  async function doAction() {
+    setCmdBusy(true)
+    await ConsoleStore.send(cmd)
+    setCmdBusy(false)
+  }
   return jsxs('div', {
     className: 'flex items-start gap-2 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) p-2',
     children: [
       jsx('span', { className: 'mt-0.5 shrink-0 rounded border px-1.5 py-0.5 font-mono text-[0.65rem] font-bold ' + tier.cls, children: tier.label }),
-      jsx('span', { className: 'min-w-0 flex-1 text-sm leading-snug text-(--ui-text-primary) ' + (a.status && a.status !== 'open' ? 'line-through opacity-50' : ''), children: a.text }),
+      jsx('div', { className: 'min-w-0 flex-1', children: [
+        jsx('span', { className: 'block text-sm leading-snug text-(--ui-text-primary) ' + (a.status && a.status !== 'open' ? 'line-through opacity-50' : ''), children: a.text }),
+        cmdBusy && jsx('div', { className: 'ao-mini-term', children: lastReply || 'Running\u2026' })
+      ] }),
       a.status === 'open' || !a.status ? jsxs('div', { className: 'flex shrink-0 gap-1', children: [
         jsx('button', {
-          disabled: busy,
-          onClick: () => onDone(a.id),
-          className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 font-mono text-[0.65rem] uppercase text-(--ui-text-secondary) transition-colors hover:border-[#3fb950] hover:text-[#3fb950] disabled:opacity-40',
-          children: busy ? '…' : 'done'
+          type: 'button',
+          className: 'ao-btn',
+          'data-kind': kind,
+          disabled: busy || cmdBusy,
+          onClick: doAction,
+          title: cmd,
+          children: cmdBusy ? '\u2026' : label
         }),
         jsx('button', {
-          disabled: busy,
+          disabled: busy || cmdBusy,
+          onClick: () => onDone(a.id),
+          className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 font-mono text-[0.65rem] uppercase text-(--ui-text-secondary) transition-colors hover:border-[#3fb950] hover:text-[#3fb950] disabled:opacity-40',
+          children: busy ? '\u2026' : 'done'
+        }),
+        jsx('button', {
+          disabled: busy || cmdBusy,
           onClick: () => onKill(a.id),
           className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 font-mono text-[0.65rem] uppercase text-(--ui-text-tertiary) transition-colors hover:border-[#f85149] hover:text-[#f85149] disabled:opacity-40',
-          children: busy ? '…' : 'kill'
+          children: busy ? '\u2026' : 'kill'
         })
       ] }) : jsx('span', { className: 'shrink-0 font-mono text-[0.65rem] uppercase text-(--ui-text-tertiary)', children: a.status })
     ]
