@@ -24,26 +24,45 @@ style setup, but any backend that serves the same simple JSON routes works.
 
 ## Quickstart
 
-```bash
-npm install
+One command gets you a running deck (backend on `127.0.0.1:8785`, web UI on
+`http://localhost:4527`):
 
-# backend (FastAPI, localhost only) — pick your python
+```bash
+git clone https://github.com/DeezGit21/jarvis-deck
+cd jarvis-deck
+./start.sh        # Windows: double-click start.cmd (or run it in a terminal)
+```
+
+The launcher creates a python venv, installs both dependency sets, builds the
+frontend and starts both processes. Prefer manual steps?
+
+```bash
+npm install                      # frontend deps
+npm run build                    # produces dist/
+
+python -m pip install -r requirements.txt   # backend deps (fastapi, uvicorn, pyyaml)
+
+# backend (FastAPI, localhost only)
 python -m uvicorn standalone:app --app-dir dashboard --host 127.0.0.1 --port 8785
 
-# frontend
-npx vite preview --port 4527 --strictPort   # serves dist/ (run `npm run build` first)
+# frontend (serves dist/)
+npx vite preview --port 4527 --strictPort
 # or during development:
 npx vite --port 4527
 ```
 
 Open `http://localhost:4527`. The Vite server proxies `/api/plugins/agentos/*`
 to `127.0.0.1:8785`; when the backend isn't running the UI falls back to demo data.
+No configuration is required for a first run — see below to point the deck at
+your own boards, services and agent.
 
 ## Configuration
 
 All personal topology lives **outside the repo** in
 `~/.hermes/agentos/agentos.yaml` (or the equivalent agent home on your machine).
-Every key is optional:
+A fully commented template is in
+[config/agentos.yaml.example](config/agentos.yaml.example) — copy it there and
+edit. Every key is optional:
 
 ```yaml
 persona: "you"                      # how the advisor addresses you

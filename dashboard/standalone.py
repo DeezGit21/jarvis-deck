@@ -4,8 +4,7 @@ Serves the same APIRouter the gateway mounts, on a plain local port so the
 Vite preview shell can proxy to it and show real data instead of mocks.
 Localhost only — no auth wall here, do not expose beyond loopback.
 
-    C:/Users/D/.hermes/agentos/venv/Scripts/python.exe -m uvicorn standalone:app \
-        --app-dir dashboard --host 127.0.0.1 --port 8775
+    python -m uvicorn standalone:app --app-dir dashboard --host 127.0.0.1 --port 8785
 """
 from __future__ import annotations
 
@@ -23,6 +22,7 @@ app = FastAPI(title="agentos plugin api (standalone preview)")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:4517", "http://127.0.0.1:4517",
+                   "http://localhost:4527", "http://127.0.0.1:4527",
                    "https://www.webull.com", "https://app.webull.com",
                    "https://webull.com", "https://trade.webull.com"],
     allow_methods=["*"],

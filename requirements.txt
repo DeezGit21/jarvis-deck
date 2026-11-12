@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn>=0.29
+PyYAML>=6.0
+# Optional: enables server-side neural TTS voices (the deck falls back to the
+# browser's built-in speech synthesis without it)
+edge-tts>=6.1
