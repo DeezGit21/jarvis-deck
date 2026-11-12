@@ -46,6 +46,35 @@ config path — see `_agentos_config()`). The repo itself contains no topology.
   `agentos.yaml → release_repos`.
 - **Quotes** — Yahoo chart API (stocks) + Binance (crypto), no login.
 
+## Adding Home Assistant (or any smart-home hub)
+
+The deck doesn't talk to Home Assistant directly — the services row, remediation
+and the agent do. Generic setup on any machine with Docker:
+
+```bash
+docker run -d --name homeassistant --restart unless-stopped \
+  --network host -v /opt/homeassistant:/config \
+  homeassistant/home-assistant:stable
+```
+
+Then in your instance config (`agentos.yaml`, outside the repo):
+
+```yaml
+services:
+  - name: Home Assistant
+    url: http://<ha-host>:8123
+remediation:
+  auto:
+    Home Assistant: ssh <ha-host> "docker restart homeassistant"
+```
+
+To let the agent control devices, enable Home Assistant's **built-in MCP
+server** (Settings → System → AI, or add the "Model Context Protocol"
+integration) and point your agent's MCP client at
+`http://<ha-host>:8123/api/mcp` — it uses OAuth 2.0 with PKCE, so no long-lived
+tokens are needed. See the official docs:
+https://www.home-assistant.io/integrations/mcp_server/
+
 ## What to change for a different agent
 
 - `_run_hermes_prompt()` / `/command` — replace the `hermes chat -Q` shell-out
