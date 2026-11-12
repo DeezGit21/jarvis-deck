@@ -1,0 +1,35 @@
+# JARVIS Deck — instance configuration
+#
+# Copy this file to ~/.hermes/agentos/agentos.yaml (create the folder if needed)
+# and edit. Every key is optional — the deck runs fine with no config at all.
+# Keep this file outside the repo: it holds your personal topology.
+
+persona: "you"                      # how the advisor addresses you
+hub_url: "http://localhost:3003"    # your business app / CRM link target
+tz_offset_hours: -7
+
+db:                                 # money-tab metrics via ssh + psql
+  ssh_host: my-db-host
+  psql_user: postgres
+  psql_db: mydb
+
+services:                           # status-card pings (name + url)
+  - name: My App
+    url: http://localhost:3000
+
+release_repos:                      # release board (owner/repo, uses gh CLI)
+  - label: My App
+    repo: you/my-app
+
+tts:                                # server-side voice replies (optional)
+  provider: edge                    # edge | gemini | fish
+  voice: "en-US-ChristopherNeural"  # edge voice name
+  gemini_voice: "Charon"            # when provider: gemini (needs GEMINI_API_KEY)
+  # fish_model: s2.1-pro-free       # when provider: fish (needs FISH_API_KEY)
+
+remediation:                        # auto-restart scanner (optional, off by default)
+  enabled: false
+  scan_minutes: 5
+  cooldown_minutes: 15
+  max_auto_per_hour: 4
+  auto: {}                          # service-name -> restart command (allowlist)
