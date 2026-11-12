@@ -775,12 +775,14 @@ const Tts = {
   // Near-instant verbal acknowledgement ("Generating brief now, sir") for
   // briefs/actions — always the fast pre-warmed edge-tts path, so D hears
   // JARVIS confirm within ~100ms while the real reply synthesizes.
-  ack(phrase) {
+  ack(phrase, voiceOverride) {
     if (!this.on()) return false
     const line = phrase || TTS_ACK_LINES[this._ackI++ % TTS_ACK_LINES.length]
     this.stop()
     try {
-      const audio = new Audio('/api/plugins/agentos/tts?ack=1&text=' + encodeURIComponent(line))
+      const url = '/api/plugins/agentos/tts?ack=1&text=' + encodeURIComponent(line) +
+        (voiceOverride ? '&voice=' + encodeURIComponent(voiceOverride) : '')
+      const audio = new Audio(url)
       this._audio = audio
       audio.volume = this.vol()
       audio.play().catch(() => this._fallbackSpeak(line, null))
@@ -3996,6 +3998,7 @@ const TTS_VOICES = [
   ['en-US-GuyNeural', 'Guy — American male'],
   ['en-US-AriaNeural', 'Aria — American female'],
   ['en-AU-NatashaNeural', 'Natasha — Australian female'],
+  ['fish:612b878b113047d9a770c069c8b4fdfe', 'Jarvis (MCU) — Fish Audio'],
 ]
 
 function SettingsSection() {
@@ -4157,7 +4160,14 @@ function SettingsSection() {
           ] }),
           jsx('button', {
             type: 'button', className: 'ao-btn',
-            onClick: () => { Tts.ack('Testing, one two three. Standing by, sir.') },
+            onClick: () => {
+              // test the SELECTED voice, not the saved one — and surface
+              // provider errors (e.g. missing FISH_API_KEY) as a visible message
+              Tts.ack('Testing, one two three. Standing by, sir.', voice || undefined)
+              fetch('/api/plugins/agentos/tts?ack=1&text=ping' + (voice ? '&voice=' + encodeURIComponent(voice) : ''))
+                .then(r => { if (!r.ok) return r.json().then(j => { throw new Error(j.detail || r.status) }).catch(() => { throw new Error('HTTP ' + r.status) }) })
+                .catch(e => setKeyMsg('voice test: ' + String(e && e.message || e).slice(0, 140)))
+            },
             children: 'Test voice'
           })
         ] })

@@ -1015,15 +1015,38 @@ _TTS_GEMINI_STYLE = (
 )
 
 
-def _tts_cfg() -> dict:
+def _tts_cfg(voice_override: str | None = None) -> dict:
     tts_cfg = _CFG.get("tts") if isinstance(_CFG.get("tts"), dict) else {}
-    # settings.json wins over agentos.yaml (the deck's Settings panel writes it)
-    override = str(_load_settings().get("tts_voice") or "").strip()
+    # The Settings-panel voice picker is authoritative: a saved (or per-request)
+    # edge voice switches the provider to edge-tts; a fish:<model-id> value
+    # switches to Fish Audio. Empty → agentos.yaml defaults.
+    override = str(voice_override or _load_settings().get("tts_voice") or "").strip()
+    if override.startswith("fish:"):
+        ref = override.split(":", 1)[1].strip()
+        return {
+            "provider": "fish",
+            "voice": override,
+            "rate": str(tts_cfg.get("rate") or "+4%"),
+            "gemini_voice": str(tts_cfg.get("gemini_voice") or "Charon"),
+            "fish_ref": ref,
+            "fish_model": str(tts_cfg.get("fish_model") or "s2.1-pro-free"),
+        }
+    if override:
+        return {
+            "provider": "edge",
+            "voice": override,
+            "rate": str(tts_cfg.get("rate") or "+4%"),
+            "gemini_voice": str(tts_cfg.get("gemini_voice") or "Charon"),
+            "fish_ref": str(tts_cfg.get("fish_reference") or ""),
+            "fish_model": str(tts_cfg.get("fish_model") or "s2.1-pro-free"),
+        }
     return {
         "provider": str(tts_cfg.get("provider") or "gemini").strip().lower(),
-        "voice": override or str(tts_cfg.get("voice") or "en-GB-RyanNeural"),
+        "voice": str(tts_cfg.get("voice") or "en-GB-RyanNeural"),
         "rate": str(tts_cfg.get("rate") or "+4%"),
         "gemini_voice": str(tts_cfg.get("gemini_voice") or "Charon"),
+        "fish_ref": str(tts_cfg.get("fish_reference") or ""),
+        "fish_model": str(tts_cfg.get("fish_model") or "s2.1-pro-free"),
     }
 
 
@@ -1100,9 +1123,83 @@ def _tts_gemini_wav(text: str, voice: str) -> bytes:
     return buf.getvalue()
 
 
-def _tts_audio_response(text: str, force_provider: str | None = None):
-    cfg = _tts_cfg()
+def _tts_fish_mp3(text: str, reference_id: str, model: str) -> bytes:
+    """Synthesize via Fish Audio POST /v1/tts -> full mp3 bytes.
+
+    reference_id is a fish.audio voice-model id (the Jarvis MCU voice is
+    612b878b113047d9a770c069c8b4fdfe). Model header selects s2.1-pro-free
+    (free tier) by default; 401/402/429 map to actionable messages.
+    """
+    import json as _json
+    import os as _os
+    import urllib.error as _urlerr
+    import urllib.request as _urllib
+
+    key = _read_env().get("FISH_API_KEY") or _os.environ.get("FISH_API_KEY")
+    if not key:
+        raise RuntimeError(
+            "no FISH_API_KEY in agentos .env — add it in Settings "
+            "(fish.audio > Get your API key)")
+    body = _json.dumps({
+        "text": text,
+        "reference_id": reference_id,
+        "format": "mp3",
+        "latency": "balanced",
+    }).encode("utf-8")
+    req = _urllib.Request(
+        "https://api.fish.audio/v1/tts",
+        data=body,
+        headers={
+            "Authorization": "Bearer " + key,
+            "Content-Type": "application/json",
+            "model": model,
+        })
+    try:
+        with _urllib.urlopen(req, timeout=120) as resp:
+            data = resp.read()
+    except _urlerr.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")[:200]
+        except OSError:
+            pass
+        hints = {
+            401: "invalid FISH_API_KEY — re-copy it from fish.audio API keys",
+            402: "Fish Audio credit needed — switch to the free model or add API credit",
+            400: "bad voice model id (" + reference_id[:8] + "…)",
+            429: "Fish Audio rate limit — wait a moment and retry",
+        }
+        raise RuntimeError(
+            f"Fish Audio TTS failed ({e.code}): {hints.get(e.code, detail or 'request error')}"
+        ) from None
+    except OSError as e:
+        raise RuntimeError(f"Fish Audio TTS unreachable: {e}") from None
+    if not data:
+        raise RuntimeError("Fish Audio TTS returned empty audio")
+    return data
+
+
+def _tts_audio_response(text: str, force_provider: str | None = None,
+                        voice_override: str | None = None):
+    cfg = _tts_cfg(voice_override)
     provider = force_provider or cfg["provider"]
+    # Fish Audio (cloned/community voices, e.g. Jarvis MCU). Cache full mp3s;
+    # a failure surfaces as 502 with the actionable message — no silent edge
+    # fallback, which would mask a misconfigured key as "the wrong voice".
+    if provider == "fish" and cfg.get("fish_ref"):
+        import hashlib as _hashlib
+        fkey = _hashlib.sha1(("fish|" + cfg["fish_ref"] + "|" + cfg["fish_model"] + "|" + text)
+                             .encode("utf-8")).hexdigest()[:16]
+        CACHE.mkdir(parents=True, exist_ok=True)
+        fout = CACHE / f"tts-fish-{fkey}.mp3"
+        if fout.exists() and fout.stat().st_size > 0:
+            return Response(content=fout.read_bytes(), media_type="audio/mpeg")
+        try:
+            mp3 = _tts_fish_mp3(text, cfg["fish_ref"], cfg["fish_model"])
+        except RuntimeError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from None
+        fout.write_bytes(mp3)
+        return Response(content=mp3, media_type="audio/mpeg")
     if provider == "gemini":
         import hashlib as _hashlib
         gkey = _hashlib.sha1((provider + "|" + cfg["gemini_voice"] + "|" + text).encode("utf-8")).hexdigest()[:16]
@@ -1155,6 +1252,8 @@ def _tts_prewarm_acks() -> None:
     import asyncio as _asyncio
 
     def _run():
+        if _tts_cfg()["provider"] == "fish":
+            return  # cloned voice: don't burn Fish Audio calls at startup
         for phrase in _TTS_ACK_PHRASES:
             try:
                 cfg = _tts_cfg()
@@ -1181,17 +1280,30 @@ def _tts_prewarm_acks() -> None:
 _tts_prewarm_acks()
 
 
+_EDGE_VOICE_RE = _re.compile(r"^[A-Za-z][A-Za-z0-9-]{2,40}Neural$")
+_FISH_REF_RE = _re.compile(r"^fish:[0-9a-fA-F]{8,64}$")
+
+
 @router.get("/tts")
-def tts_get(text: str = "", ack: str = ""):
+def tts_get(text: str = "", ack: str = "", voice: str = ""):
     """Streaming neural TTS — the browser <audio> element starts playing as
     chunks arrive (first sound in well under a second for short lines).
-    ack=1 forces the fast edge-tts provider (instant pre-warmed acknowledgements)."""
+    ack=1 forces the fast edge-tts provider for pre-warmed acknowledgements
+    (unless the active voice is a fish:<id> clone — then Fish Audio serves it).
+    voice=<override> tests a selection without saving it (edge voice name or
+    fish:<model-id>)."""
     text = (text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="text required")
     if len(text) > 4000:
         raise HTTPException(status_code=413, detail="text too long for one utterance")
-    return _tts_audio_response(text, force_provider="edge" if ack else None)
+    voice = (voice or "").strip()
+    if voice and not (_EDGE_VOICE_RE.match(voice) or _FISH_REF_RE.match(voice)):
+        raise HTTPException(status_code=400, detail="invalid voice override")
+    cfg = _tts_cfg(voice or None)
+    force_edge = bool(ack) and cfg["provider"] != "fish"
+    return _tts_audio_response(text, force_provider="edge" if force_edge else None,
+                               voice_override=voice or None)
 
 
 @router.post("/tts")
@@ -2230,6 +2342,7 @@ _SETTINGS_KEYS = {
     "ALPACA_SECRET_KEY": "Alpaca — trading (secret)",
     "PLAID_CLIENT_ID": "Plaid — banking (client id)",
     "PLAID_SECRET": "Plaid — banking (secret)",
+    "FISH_API_KEY": "Fish Audio — TTS voices (fish.audio)",
 }
 
 _ENV_NAME_RE = _re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
