@@ -15,6 +15,7 @@ import {
 } from '@hermes/plugin-sdk'
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useRef, useState, useMemo, Component } from 'react'
+import { LOGOS } from './logos.js'
 
 let REST = null
 let openExternal = null // set in register(): ctx.os.openExternal, window.open fallback
@@ -74,6 +75,11 @@ html.ao-companion, html.ao-companion body, html.ao-companion #root { background:
   text-shadow: 0 0 18px color-mix(in srgb, var(--ui-accent) 35%, transparent); }
 .ao-led { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor;
   animation: aoPulse 2.4s ease-in-out infinite; }
+.ao-logo { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ao-logo svg { display: block; }
+.ao-logo-mono { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  border-radius: 4px; background: color-mix(in srgb, var(--ui-accent) 8%, var(--ui-tertiary-background));
+  color: var(--ui-text-secondary); font-family: var(--font-mono); font-weight: 600; line-height: 1; }
 .ao-skel { border-radius: 6px; background:
   linear-gradient(90deg, transparent, color-mix(in srgb, var(--ui-accent) 12%, transparent), transparent);
   background-size: 200% 100%; animation: aoShimmer 1.5s linear infinite; }
@@ -449,6 +455,63 @@ function AnimNum({ value, decimals = 0, prefix = '', duration = 900 }) {
 function Led({ up }) {
   const color = up === null || up === undefined ? '#d29922' : up ? '#3fb950' : '#f85149'
   return jsx('span', { className: 'ao-led', style: { color } })
+}
+
+// ------------------------------------------------------------ brand logos
+// Settings rows get an inline brand mark (Simple Icons path data, vendored
+// in logos.js — no runtime network). Env-var names map via prefix table;
+// anything unmapped falls back to a neutral monogram tile.
+const LOGO_KEY_ALIASES = {
+  GEMINI_API_KEY: 'googlegemini',
+  OPENAI_API_KEY: 'openai',
+  ANTHROPIC_API_KEY: 'anthropic',
+  OPENROUTER_API_KEY: 'openrouter',
+  STRIPE_SECRET_KEY: 'stripe',
+  TWILIO_AUTH_TOKEN: 'twilio',
+  SENDGRID_API_KEY: 'sendgrid'
+}
+const LOGO_NAME_ALIASES = {
+  'twilio-docs': 'twilio',
+  'twilio docs': 'twilio',
+  'google calendar': 'googlecalendar',
+  'google drive': 'googledrive'
+}
+
+function _lum(hex) {
+  const h = String(hex || '').replace('#', '')
+  if (h.length !== 6) return 1
+  const c = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) / 255)
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+}
+
+function logoMarkFor(name) {
+  if (!name) return null
+  const key = String(name).trim()
+  const slug = LOGO_KEY_ALIASES[key] ||
+    LOGO_NAME_ALIASES[key.toLowerCase()] ||
+    key.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const mark = LOGOS[slug]
+  if (!mark) return null
+  const fill = mark.fill && _lum(mark.fill) >= 0.14 ? mark.fill : 'var(--ui-text-secondary)'
+  return { title: mark.title, fill, body: mark.body.replace(/<title>[\s\S]*?<\/title>/, '') }
+}
+
+function BrandLogo({ name, size = 15 }) {
+  const mark = logoMarkFor(name)
+  if (!mark) {
+    const letter = (String(name || '').trim()[0] || '?').toUpperCase()
+    return jsx('span', {
+      className: 'ao-logo-mono', style: { width: size, height: size, fontSize: Math.round(size * 0.58) },
+      'aria-hidden': 'true', children: letter
+    })
+  }
+  return jsx('span', {
+    className: 'ao-logo', title: mark.title, 'aria-hidden': 'true',
+    dangerouslySetInnerHTML: {
+      __html: '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size +
+        '" fill="' + mark.fill + '" role="img">' + mark.body + '</svg>'
+    }
+  })
 }
 
 function Skel({ h = '1rem', w = '60%', delay = 0, className }) {
@@ -4109,6 +4172,7 @@ function SettingsSection() {
         d && Object.entries(d.keys || {}).map(([name, info]) =>
           jsxs('div', { className: 'flex flex-wrap items-center gap-2 rounded-md px-1 py-1.5', children: [
             jsx(Led, { up: info.set ? true : false }),
+            jsx(BrandLogo, { name }),
             jsxs('div', { className: 'min-w-0 flex-1 basis-48', children: [
               jsx('div', { className: 'font-mono text-xs text-(--ui-text-primary)', children: name }),
               jsx('div', { className: 'truncate text-[0.68rem] text-(--ui-text-tertiary)', title: info.hint, children: info.hint })
@@ -4137,6 +4201,7 @@ function SettingsSection() {
         // custom key row — any integration this user's stack needs
         jsxs('div', { className: 'flex flex-wrap items-center gap-2 rounded-md border border-dashed border-(--ui-stroke-secondary) px-1 py-1.5', children: [
           jsx('span', { className: 'ao-led', style: { color: 'var(--ui-text-quaternary)', animation: 'none' } }),
+          jsx(BrandLogo, { name: customName || '\u2726' }),
           jsx('input', {
             value: customName,
             onChange: e => setCustomName(e.target.value.replace(/[^a-zA-Z0-9_]/g, '_').toUpperCase()),
@@ -4176,6 +4241,7 @@ function SettingsSection() {
           jsx('div', { className: 'space-y-1', children: hosted.map(c =>
             jsxs('div', { className: 'flex items-center gap-2 rounded-md px-1 py-1 text-sm', children: [
               jsx(Led, { up: c.connected ? true : false }),
+              jsx(BrandLogo, { name: c.name }),
               jsx('span', { className: 'min-w-0 flex-1 truncate text-(--ui-text-secondary)', children: c.name }),
               c.connected && c.url && jsx('button', {
                 type: 'button', className: 'ao-btn', onClick: () => openExternal(c.url), children: 'Open'
@@ -4193,6 +4259,7 @@ function SettingsSection() {
           jsx('div', { className: 'space-y-1', children: mcps.map(m =>
             jsxs('div', { className: 'flex items-center gap-2 rounded-md px-1 py-1 text-sm', children: [
               jsx(Led, { up: m.enabled ? true : false }),
+              jsx(BrandLogo, { name: m.name }),
               jsx('span', { className: 'min-w-0 flex-1 truncate text-(--ui-text-secondary)', children: m.name }),
               m.url && jsx('button', {
                 type: 'button', className: 'ao-btn', onClick: () => openExternal(m.url), children: 'Open'
