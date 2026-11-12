@@ -748,6 +748,19 @@ const ConsoleStore = {
 // Rotating near-instant acknowledgements (backend pre-warms these as edge-tts).
 const TTS_ACK_LINES = ['Generating brief now, sir', 'Right away, sir', 'On it, sir', 'At once, sir', 'Working on it now, sir']
 
+// Cap any spoken text at ~95 words: Fish synthesis wait scales with length
+// (~40s for 150 words, ~11s for 85). Trim at a sentence boundary so the cap
+// never ends mid-sentence. Mirrors the backend broadcast cap.
+function capSpeech(text) {
+  let s = String(text).trim()
+  if (s.length <= 600) return s
+  const cut = s.lastIndexOf('. ', 600)
+  s = cut > 200 ? s.slice(0, cut + 1) : s.slice(0, 600)
+  s = s.replace(/[ ,;:]+$/, '')
+  if (!/[.!?]$/.test(s)) s += '.'
+  return s
+}
+
 // Text-to-speech pipeline (owned by the store so every surface speaks).
 const Tts = {
   supported: typeof window !== 'undefined' && !!window.speechSynthesis,
@@ -791,11 +804,11 @@ const Tts = {
   },
   speak(text, onEnd) {
     if (!this.on()) return false
-    const clean = String(text)
+    const cleaned = String(text)
       .replace(/```[\s\S]*?```/g, ' code block. ')
       .replace(/\*\*|__|`|#+\s?/g, '')
       .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-      .slice(0, 1200)
+    const clean = capSpeech(cleaned)
     this.stop()
     OrbBus.set('speaking')
     this._speakAsync(clean, onEnd)
@@ -1570,7 +1583,18 @@ function OrbFrames({ svcs, up, open, rev, onOpenSpotlight }) {
       jsx('div', { className: 'ao-frame-sub', children: 'month to date' })
     ] }), '-1.2s'),
     frame('ao-fr-rb', 'actions', jsxs('div', { className: 'ao-frame-actions', children: [
-      act('brief', () => JarvisCtl.send('Generate my daily brief'), 'Run the daily brief'),
+      act('brief', async () => {
+        // fast path: today's brief is usually generated + its speech script
+        // cached — speak it immediately. Only fall back to a full agent
+        // session when no brief exists yet (broadcast 409s).
+        try {
+          const r = await REST('/brief/broadcast', { method: 'POST', body: {}, timeoutMs: 120000 })
+          ConsoleStore.add({ role: 'jarvis', text: r.speech })
+          Tts.speak(r.speech)
+        } catch {
+          JarvisCtl.send('Generate my daily brief')
+        }
+      }, 'Run the daily brief'),
       act('top 3', () => JarvisCtl.send('What are my top 3 actions today?'), "Today's top 3 actions"),
       act('console', onOpenSpotlight, 'Open the command runner (Ctrl+J)')
     ] }), '-3.2s')

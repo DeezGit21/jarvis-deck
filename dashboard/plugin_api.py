@@ -1026,12 +1026,22 @@ _TTS_GEMINI_STYLE = (
 )
 
 
+def _saved_tts_voice() -> str:
+    # _load_settings is defined near the end of this module; the TTS prewarm
+    # thread can call this at import time, before that line executes. Fall
+    # back to "" (yaml defaults) instead of crashing the prewarm thread.
+    try:
+        return str(_load_settings().get("tts_voice") or "").strip()
+    except NameError:
+        return ""
+
+
 def _tts_cfg(voice_override: str | None = None) -> dict:
     tts_cfg = _CFG.get("tts") if isinstance(_CFG.get("tts"), dict) else {}
     # The Settings-panel voice picker is authoritative: a saved (or per-request)
     # edge voice switches the provider to edge-tts; a fish:<model-id> value
     # switches to Fish Audio. Empty → agentos.yaml defaults.
-    override = str(voice_override or _load_settings().get("tts_voice") or "").strip()
+    override = str(voice_override or _saved_tts_voice() or "").strip()
     if override.startswith("fish:"):
         ref = override.split(":", 1)[1].strip()
         return {
