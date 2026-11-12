@@ -503,10 +503,12 @@ BROADCAST_PROMPT = """You are JARVIS, the voice assistant on the operations dash
 Convert today's daily brief into a spoken announcement plus follow-up suggestions.
 
 Rules:
-- speech: 120-220 words of clean speakable prose — no markdown, no bullets, no symbols. \
-Cover the top priorities first, then business numbers (round them for speech), then \
-anything down or at risk. Start with a one-line greeting appropriate to the current \
-local time given below. Speak TO D, confident chief-of-staff tone, zero fluff.
+- speech: AT MOST 90 words of clean speakable prose — no markdown, no bullets, no symbols. \
+Pick the TOP THREE things that need D's attention; never enumerate every task or metric \
+(summarize the rest as "a few open items"). Cover business numbers (round them for speech) \
+and anything down or at risk. Start with a one-line greeting appropriate to the current \
+local time given below. Speak TO D, confident chief-of-staff tone, zero fluff. \
+Brevity is a feature: shorter is better.
 - followUps: 0-5 concrete commands D could give his agent immediately after the brief \
 (imperative voice, under 90 characters each, executable via hermes/kanban/hub tools).
 
@@ -543,7 +545,7 @@ def brief_broadcast():
     key = env.get("GEMINI_API_KEY", "")
     if not key:
         raise HTTPException(status_code=409, detail="GEMINI_API_KEY missing from ~/.hermes/agentos/.env")
-    now_local = _dt.datetime.now(PHOENIX).strftime("%A %B %d, %Y at %I:%M %p")
+    now_local = _dt.datetime.now(AGENTOS_TZ).strftime("%A %B %d, %Y at %I:%M %p")
     payload = {
         "contents": [{"parts": [{"text": BROADCAST_PROMPT.format(brief=brief[:12000], now=now_local)}]}],
         "generationConfig": {
@@ -567,9 +569,18 @@ def brief_broadcast():
     data = _extract_json(text)
     if data is None or not data.get("speech"):
         raise HTTPException(status_code=502, detail=f"unparseable broadcast output: {text[:200]}")
+    speech = str(data["speech"]).strip()
+    # Hard cap — TTS synthesis wait scales with length (Fish: ~40s for 150
+    # words). Trim at a sentence boundary so the cap never ends mid-sentence.
+    _SPEECH_CAP = 600  # ~95 words ≈ 25-30s of audio
+    if len(speech) > _SPEECH_CAP:
+        cut = speech.rfind(". ", 0, _SPEECH_CAP)
+        speech = speech[: cut + 1 if cut > 200 else _SPEECH_CAP].rstrip(" ,;:")
+        if not speech.endswith((".", "!", "?")):
+            speech += "."
     out = {
         "ok": True, "date": _local_date(),
-        "speech": str(data["speech"])[:6000],
+        "speech": speech,
         "followUps": [str(f).strip()[:120] for f in (data.get("followUps") or [])[:6] if str(f).strip()],
         "brief_mtime": mtime,
         "at": _dt.datetime.now().isoformat(timespec="seconds"),
