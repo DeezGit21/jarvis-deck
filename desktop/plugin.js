@@ -3660,7 +3660,7 @@ function MemoryGalaxy() {
       p.hov = p.down ? -1 : hit(mx, my)
       cv.style.cursor = p.hov >= 0 ? 'pointer' : p.down ? 'grabbing' : 'grab'
     }
-    const onDown = (e) => { const p = ptr.current; p.down = true; p.moved = 0; p.lx = e.clientX; p.ly = e.clientY; cv.setPointerCapture(e.pointerId) }
+    const onDown = (e) => { if (e.button !== 0) return; const p = ptr.current; p.down = true; p.moved = 0; p.lx = e.clientX; p.ly = e.clientY; cv.setPointerCapture(e.pointerId) }
     const onUp = (e) => {
       const p = ptr.current; p.down = false
       if (p.moved < 6) {
@@ -3669,7 +3669,9 @@ function MemoryGalaxy() {
         setSel(i >= 0 ? model[i].n : null)
       }
     }
-    const onWheel = (e) => { e.preventDefault(); cam.current.zoom = Math.max(0.55, Math.min(2.4, cam.current.zoom * (e.deltaY > 0 ? 0.92 : 1.08))) }
+    // Wheel over the map zooms ONLY with Ctrl/Meta held; otherwise let the page
+    // scroll normally (preventDefault here made the page feel dead under the cursor).
+    const onWheel = (e) => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); cam.current.zoom = Math.max(0.55, Math.min(2.4, cam.current.zoom * (e.deltaY > 0 ? 0.92 : 1.08))) }
     cv.addEventListener('pointermove', onMove)
     cv.addEventListener('pointerdown', onDown)
     cv.addEventListener('pointerup', onUp)
@@ -3690,7 +3692,7 @@ function MemoryGalaxy() {
       jsx('span', { style: { color: '#7ee787' }, children: '\u25CF cron/services' }),
       jsx('span', { style: { color: '#f85149' }, children: '\u25CF failing' }),
       jsx('span', { style: { color: 'var(--ui-text-tertiary)' }, children: '\u25CF done' }),
-      jsx('span', { style: { marginLeft: 'auto', opacity: 0.7 }, children: nodes.length + ' nodes \u00B7 drag \u00B7 wheel \u00B7 click' })
+      jsx('span', { style: { marginLeft: 'auto', opacity: 0.7 }, children: nodes.length + ' nodes \u00B7 drag \u00B7 ctrl+wheel \u00B7 click' })
     ] })
   const detail = !sel ? null : jsx('div', { style: { position: 'absolute', right: 10, top: 8, maxWidth: '62%', fontSize: 11, padding: '7px 10px', borderRadius: 8, background: 'rgba(10,14,20,0.92)', border: '1px solid var(--ui-stroke-secondary)', pointerEvents: 'none' },
     children: [
@@ -4680,6 +4682,14 @@ function AgentosPage() {
   const [svcOpen, setSvcOpen] = useState(false)
   const [mode, setMode] = useState(ModeStore.mode)
   useEffect(() => ModeStore.subscribe(() => setMode(ModeStore.mode)), [])
+  // Kill Chrome middle-click autoscroll: an accidental scroll-wheel PRESS starts
+  // it, and the page then drifts toward the cursor's offset from the origin
+  // (reads as "page scrolls by itself when I'm not touching the mouse").
+  useEffect(() => {
+    const stop = e => { if (e.button === 1) e.preventDefault() }
+    window.addEventListener('mousedown', stop, { capture: true })
+    return () => window.removeEventListener('mousedown', stop, { capture: true })
+  }, [])
   const [, force] = useState(0)
   useEffect(() => ConsoleStore.subscribe(() => force(v => v + 1)), [])
   const svcQ = useQuery({
