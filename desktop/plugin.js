@@ -2510,11 +2510,18 @@ function MoneyConnector({ name, data, onRefresh, refreshing, delay = 0 }) {
         onClick: onRefresh,
         disabled: refreshing,
         title: 'Refetch now',
-        children: refreshing ? jsx(RingSpin, { size: 12 }) : 'Refresh'
+        className: 'ao-btn text-xs text-(--ui-accent) ' + (refreshing ? 'opacity-70' : ''),
+        children: refreshing ? jsxs(Fragment, { children: [
+          jsx(RingSpin, { size: 12 }),
+          jsx('span', { children: 'refreshing…' })
+        ] }) : 'Refresh'
       })
     ] }),
     children: jsxs(Fragment, {
       children: [
+        refreshing && jsx('div', { className: 'text-xs text-(--ui-text-tertiary)',
+          style: { animation: 'aoGlowLine 1.6s ease-in-out infinite' },
+          children: 'live refetch — each source can take up to 90s; this card updates the moment it lands' }),
         !data && jsx(Skel, { h: '3rem', w: '100%' }),
         data && !configured && jsxs(Fragment, { children: [
           jsx('div', { className: 'text-sm text-(--ui-text-secondary)', children: 'Not connected.' }),

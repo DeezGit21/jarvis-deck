@@ -77,6 +77,7 @@ export function useQuery({ queryKey, queryFn, refetchInterval = 0 }) {
     data: e.data,
     error: e.error,
     isLoading: e.state === 'loading',
+    isFetching: e.state === 'loading',
     refetch: () => _fetch(id),
   }
 }
