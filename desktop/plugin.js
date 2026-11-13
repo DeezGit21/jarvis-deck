@@ -778,49 +778,82 @@ const ConsoleStore = {
 }
 
 // Rotating near-instant acknowledgements (backend pre-warms these as edge-tts).
-const TTS_ACK_LINES = ['Right away, sir', 'On it, sir', 'At once, sir', 'Working on it now, sir']
+const TTS_ACK_LINES = ['Right away, sir', 'On it, sir', 'At once, sir', 'Working on it now, sir', 'Consider it done, sir']
 
-// Contextual spoken ack: JARVIS answers WHAT he was just asked to do, not a
-// canned line for every click. Returns undefined → caller falls back to the
-// rotating generics. Kept regex-first so every ConsoleStore.send call site
-// (advisor rows, automation events, galaxy actions, spotlight) gets it free.
+// Contextual spoken ack: JARVIS answers WHAT he was just asked to do, with a
+// rotating variant per action so repeated clicks never sound like a recording.
+// Functions take the captured subject (service/contact/sender — original casing
+// preserved); plain arrays are subject-less. Returns undefined → caller falls
+// back to the rotating generics. Kept regex-first so every ConsoleStore.send
+// call site (advisor rows, automation events, galaxy actions, spotlight) gets
+// it free.
+const ACK_VARIANTS = {
+  brief: ['Generating brief now, sir', 'Compiling the brief now, sir', 'Putting the brief together, sir'],
+  restart: s => ['Restarting ' + s + ' now, sir', 'Bringing ' + s + ' back up, sir', 'Cycling ' + s + ' for you, sir', 'Kicking ' + s + ' back to life, sir'],
+  diagnose: s => ['Digging into ' + s + ', sir', 'Running diagnostics on ' + s + ', sir', 'Investigating ' + s + ' now, sir', 'On the ' + s + ' failure, sir \u2014 pulling the logs'],
+  voiceText: w => ['Checking that text from ' + w + ', sir', 'Pulling up the message from ' + w + ', sir', 'Looking at that text from ' + w + ', sir'],
+  voiceCall: w => ['Checking that missed call from ' + w + ', sir', 'On that missed call from ' + w + ', sir', 'Pulling the call record for ' + w + ', sir'],
+  voicemail: ['Pulling that voicemail for you, sir', 'Fetching the voicemail now, sir', 'Let me play that voicemail back, sir'],
+  email: f => ['Opening the message from ' + f + ', sir', 'Pulling up the email from ' + f + ', sir', 'Let me get that message from ' + f + ', sir'],
+  inbox: ['Sorting your inbox, sir', 'Triage mode \u2014 clearing the inbox, sir', 'On your mail now, sir'],
+  telegram: t => ['Reading the ' + t + ' thread, sir', 'Pulling up the ' + t + ' conversation, sir', 'Opening the ' + t + ' thread now, sir'],
+  event: e => ['Pulling up ' + e + ', sir', 'Bringing up ' + e + ' for you, sir', 'Getting ' + e + ' on screen, sir'],
+  chart: s => ['Pulling the chart on ' + s + ', sir', 'Bringing up the ' + s + ' tape, sir', 'Running the numbers on ' + s + ', sir'],
+  news: s => ['Checking the wires on ' + s + ', sir', 'Scanning the news on ' + s + ', sir', 'Pulling the latest on ' + s + ', sir'],
+  delegate: ['Dispatching that to the team, sir', 'Delegating it now, sir', 'Handing that off to the agents, sir'],
+  remember: ['Committing that to memory, sir', 'Noted \u2014 I\u2019ll remember that, sir', 'Filing that away, sir'],
+  forget: ['Striking that from memory, sir', 'Erasing that record, sir', 'Done \u2014 forgotten, sir'],
+  calendar: ['Pulling up your calendar, sir', 'Bringing up the schedule, sir', 'Checking your day, sir'],
+  jobs: ['Pulling the job files, sir', 'Bringing up the job board, sir', 'On the jobs now, sir'],
+  leads: ["Going through this week's leads, sir", 'Pulling the lead list, sir', 'On the new leads, sir'],
+  todos: ['Reviewing your list, sir', 'Pulling up the board, sir', 'Checking your tasks, sir'],
+  mode: ['Switching views, sir', 'Changing the view now, sir'],
+  diag: ['Running diagnostics now, sir', 'Scanning the system, sir']
+}
+const _ackI = {} // per-category rotation counters — guarantees no immediate repeat
+function pickAck(key) {
+  const variants = ACK_VARIANTS[key]
+  if (!variants) return undefined
+  const lines = typeof variants === 'function' ? variants.apply(null, [].slice.call(arguments, 1)) : variants
+  _ackI[key] = ((_ackI[key] || 0) + 1) % lines.length
+  return lines[_ackI[key]]
+}
+
 function ackLineFor(query) {
-  const q = String(query || '').toLowerCase()
+  const raw = String(query || '')
+  const q = raw.toLowerCase()
   const cap = (s, n) => { s = String(s || '').trim(); return s.length > n ? s.slice(0, n - 1) + '\u2026' : s }
   let mm
-  if (/(^|\s)\/?brief\b|daily brief/.test(q)) return 'Generating brief now, sir'
-  if ((mm = q.match(/restart (?:the )?(?:service )?(.+?)(?:\s+service\b|\s+and\b|\u2014|$|\?)/))) {
-    const svc = cap(mm[1], 40)
-    return svc ? 'Restarting ' + svc + ' now, sir' : 'Restarting it now, sir'
+  if (/(^|\s)\/?brief\b|daily brief/.test(q)) return pickAck('brief')
+  if ((mm = raw.match(/restart (?:the )?(?:service )?(.+?)(?:\s+service\b|\s+and\b|\u2014|$|\?)/i))) {
+    return pickAck('restart', [mm[1] ? cap(mm[1], 40) : 'it'])
   }
-  if ((mm = q.match(/diagnose(?: why)?(?: the)? (.+?)(?:\s+service\b|\s+is down|$)/))) {
-    const svc = mm[1] ? cap(mm[1], 40) : ''
-    return svc ? 'Digging into ' + svc + ' for you, sir' : 'Running diagnostics now, sir'
+  if ((mm = raw.match(/diagnose(?: why)?(?: the)? (.+?)(?:\s+service\b|\s+is down|$)/i))) {
+    return mm[1] ? pickAck('diagnose', [cap(mm[1], 40)]) : pickAck('diag')
   }
-  if ((mm = q.match(/voice had a (.+?) with ([\d\s()+-]{7,25})/))) {
+  if ((mm = raw.match(/voice had a (.+?) with ([\d\s()+-]{7,25})/i))) {
     const who = cap(mm[2].trim(), 24)
-    if (mm[1].includes('voicem')) return 'Pulling that voicemail for you, sir'
-    if (mm[1].includes('missed')) return 'Checking that missed call from ' + who + ', sir'
-    return 'Checking that text from ' + who + ', sir'
+    if (mm[1].toLowerCase().includes('voicem')) return pickAck('voicemail')
+    if (mm[1].toLowerCase().includes('missed')) return pickAck('voiceCall', [who])
+    return pickAck('voiceText', [who])
   }
-  if ((mm = q.match(/unread email "([^"]+)" from (.+?) in my/))) {
-    const from = cap(mm[2].split('<')[0].trim(), 30)
-    return 'Opening the message from ' + from + ', sir'
+  if ((mm = raw.match(/unread email "([^"]+)" from (.+?) in my/i))) {
+    return pickAck('email', [cap(mm[2].split('<')[0].trim(), 30)])
   }
-  if ((mm = q.match(/telegram conversation "([^"]+)"/))) return 'Reading the ' + cap(mm[1], 40) + ' thread, sir'
-  if ((mm = q.match(/"(.+)" event/))) return 'Pulling up ' + cap(mm[1], 40) + ', sir'
-  if ((mm = q.match(/analyze ([a-z0-9.\-]+)/))) return 'Pulling the chart on ' + mm[1].toUpperCase() + ', sir'
-  if ((mm = q.match(/news and outlook for ([a-z0-9.\-]+)/))) return 'Checking the wires on ' + mm[1].toUpperCase() + ', sir'
-  if (/\bdelegate\b/.test(q)) return 'Dispatching that to the team, sir'
-  if (/\bremember\b/.test(q)) return 'Committing that to memory, sir'
-  if (/\bforget\b/.test(q)) return 'Striking that from memory, sir'
-  if (/\btriage\b|\binbox\b|\bmail\b/.test(q)) return 'Sorting your inbox, sir'
-  if (/\bcalendar\b/.test(q)) return 'Pulling up your calendar, sir'
-  if (/\bjobs\b|\bhub\b/.test(q)) return 'Pulling the job files, sir'
-  if (/\bleads\b/.test(q)) return "Going through this week's leads, sir"
-  if (/\btodo\b|\btasks\b/.test(q)) return 'Reviewing your list, sir'
-  if (/^\/?mode\b/.test(q)) return 'Switching views, sir'
-  if (/^\/?diag\b/.test(q)) return 'Running diagnostics now, sir'
+  if ((mm = raw.match(/telegram conversation "([^"]+)"/i))) return pickAck('telegram', [cap(mm[1], 40)])
+  if ((mm = raw.match(/"(.+)" event/i))) return pickAck('event', [cap(mm[1], 40)])
+  if ((mm = raw.match(/analyze ([a-z0-9.\-]+)/i))) return pickAck('chart', [mm[1].toUpperCase()])
+  if ((mm = raw.match(/news and outlook for ([a-z0-9.\-]+)/i))) return pickAck('news', [mm[1].toUpperCase()])
+  if (/\bdelegate\b/.test(q)) return pickAck('delegate')
+  if (/\bremember\b/.test(q)) return pickAck('remember')
+  if (/\bforget\b/.test(q)) return pickAck('forget')
+  if (/\btriage\b|\binbox\b|\bmail\b/.test(q)) return pickAck('inbox')
+  if (/\bcalendar\b/.test(q)) return pickAck('calendar')
+  if (/\bjobs\b|\bhub\b/.test(q)) return pickAck('jobs')
+  if (/\bleads\b/.test(q)) return pickAck('leads')
+  if (/\btodo\b|\btasks\b/.test(q)) return pickAck('todos')
+  if (/^\/?mode\b/.test(q)) return pickAck('mode')
+  if (/^\/?diag\b/.test(q)) return pickAck('diag')
   return undefined
 }
 
