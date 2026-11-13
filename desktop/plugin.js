@@ -548,12 +548,20 @@ function useLocal(key, def) {
   const [v, setV] = useState(() => {
     try {
       const s = localStorage.getItem(key)
-      return s === null ? def : JSON.parse(s)
+      if (s === null) return def
+      const val = JSON.parse(s)
+      return (val === null || val === undefined) ? def : val
     } catch { return def }
   })
+  const ref = useRef(v)
+  ref.current = v
   const set = nv => {
-    setV(nv)
-    try { localStorage.setItem(key, JSON.stringify(nv)) } catch { /* storage unavailable */ }
+    // support both direct values and functional updates (prev => next);
+    // only ever persist the computed VALUE — stringify(fn) would store "undefined"
+    const val = typeof nv === 'function' ? nv(ref.current) : nv
+    ref.current = val
+    setV(val)
+    try { localStorage.setItem(key, JSON.stringify(val)) } catch { /* storage unavailable */ }
   }
   return [v, set]
 }
@@ -2826,9 +2834,9 @@ function QuoteRow({ q, onRemove, delay }) {
           children: q.change_pct == null ? '—' : (up ? '+' : '') + q.change_pct.toFixed(2) + '%' }),
         jsx('div', { className: 'min-w-0 flex-1 overflow-hidden', children: jsx(Spark, { data: q.series, up, w: open ? 220 : 120, h: open ? 40 : 22 }) }),
         onRemove && jsx('button', {
-          type: 'button', onClick: e => { e.stopPropagation(); onRemove() }, title: 'remove',
-          className: 'shrink-0 px-1 text-xs text-(--ui-text-quaternary) hover:text-[#f85149]',
-          children: '×'
+          type: 'button', onClick: e => { e.stopPropagation(); onRemove(q.symbol) }, title: 'Remove ' + q.symbol,
+          className: 'flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-base leading-none text-(--ui-text-quaternary) transition-colors hover:bg-[#f85149]/15 hover:text-[#f85149]',
+          children: '\u2715'
         })
       ] }),
       open && jsxs('div', { className: 'mt-1.5 flex flex-wrap items-center gap-2 border-t border-(--ui-stroke-secondary) pt-1.5', children: [
@@ -2849,7 +2857,16 @@ function QuoteRow({ q, onRemove, delay }) {
 }
 
 function QuotesCard() {
-  const [watch, setWatch] = useLocal('agentos-quotes', { stocks: ['SPY', 'QQQ', 'NVDA', 'MSFT'], crypto: ['BTC-USD', 'ETH-USD'] })
+  const DEFAULT_WATCH = { stocks: ['SPY', 'QQQ', 'NVDA', 'MSFT'], crypto: ['BTC-USD', 'ETH-USD'] }
+  const [watchRaw, setWatch] = useLocal('agentos-quotes', DEFAULT_WATCH)
+  // heal corrupted storage (older builds could persist a function/null here)
+  const watch = useMemo(() => ({
+    stocks: (watchRaw && Array.isArray(watchRaw.stocks) && watchRaw.stocks.length ? watchRaw.stocks : DEFAULT_WATCH.stocks),
+    crypto: (watchRaw && Array.isArray(watchRaw.crypto)) ? watchRaw.crypto : DEFAULT_WATCH.crypto
+  }), [watchRaw])
+  useEffect(() => {
+    if (!watchRaw || !Array.isArray(watchRaw.stocks) || !Array.isArray(watchRaw.crypto)) setWatch(watch)
+  }, [])
   const q = useQuery({
     queryKey: ['agentos', 'quotes', watch],
     queryFn: () => REST('/quotes?symbols=' + encodeURIComponent(watch.stocks.join(',')) + '&crypto=' + encodeURIComponent(watch.crypto.join(','))),
@@ -2859,18 +2876,23 @@ function QuotesCard() {
   function addSym() {
     const s = add.trim().toUpperCase()
     if (!s) return
-    setWatch(prev => s.endsWith('-USD')
-      ? { ...prev, crypto: Array.from(new Set([...prev.crypto, s])) }
-      : { ...prev, stocks: Array.from(new Set([...prev.stocks, s])) })
+    setWatch(s.endsWith('-USD')
+      ? { ...watch, crypto: Array.from(new Set([...watch.crypto, s])) }
+      : { ...watch, stocks: Array.from(new Set([...watch.stocks, s])) })
     setAdd('')
   }
   function remove(sym) {
-    setWatch(prev => ({
-      stocks: prev.stocks.filter(x => x !== sym),
-      crypto: prev.crypto.filter(x => x !== sym)
-    }))
+    setWatch({
+      stocks: watch.stocks.filter(x => x !== sym),
+      crypto: watch.crypto.filter(x => x !== sym)
+    })
   }
   const d = q.data
+  // every watched symbol gets a row, even if the quote service has no data for
+  // it — an added ticker must never just vanish
+  const rows = []
+  for (const sym of watch.stocks) rows.push((d && d.stocks || []).find(x => x.symbol === sym) || { symbol: sym, missing: true })
+  for (const sym of watch.crypto) rows.push((d && d.crypto || []).find(x => x.symbol === sym) || { symbol: sym, missing: true })
   return jsx(AoCard, {
     label: 'live tickers — yahoo finance, no login',
     delay: 80,
@@ -2880,10 +2902,9 @@ function QuotesCard() {
         jsx(Skel, { h: '1.4rem', w: '90%' }), jsx(Skel, { h: '1.4rem', w: '84%', delay: 120 })
       ] }),
       q.error && jsx('div', { className: 'text-sm text-(--ui-text-secondary)', children: q.error.message }),
-      d && jsx('div', { className: 'space-y-0.5', children: [...d.stocks, ...d.crypto].map((row, i) =>
+      rows.map((row, i) =>
         jsx(QuoteRow, { q: row, delay: 100 + i * 70, onRemove: sym => remove(sym) })
-      ) }),
-      d && d.stocks.length === 0 && d.crypto.length === 0 && jsx('div', { className: 'py-2 text-sm text-(--ui-text-tertiary)', children: 'No quotes returned — try different symbols.' }),
+      ),
       jsxs('div', { className: 'flex items-center gap-2', children: [
         jsx('input', {
           value: add,
