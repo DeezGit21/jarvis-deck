@@ -442,6 +442,123 @@ def calendar_add(body: dict = Body(...)):
             "verified": verified}
 
 
+def _ssh_py(script: str, timeout: int = 30) -> tuple[int, str, str]:
+    """Run a python3 snippet on the gateway host — script feeds via stdin
+    (`python3 -`), same pattern as _psql, so no remote-shell quoting issues."""
+    args = ["ssh", str(_DB_CFG.get("ssh_host", "db-host")), "python3", "-"]
+    try:
+        p = subprocess.run(args, input=script, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout, p.stderr
+    except subprocess.TimeoutExpired:
+        return 124, "", f"timeout after {timeout}s"
+
+
+TELEGRAM_SQL_TMPL = """
+import sqlite3, json
+c = sqlite3.connect('/home/d/.hermes/state.db')
+rows = c.execute('''
+select s.id, coalesce(s.title,'(untitled)'), s.last_activity_at, s.message_count,
+       (select m.content from messages m where m.session_id = s.id and m.role = 'user'
+        and m.active = 1 and m.display_kind is null order by m.timestamp desc limit 1)
+from sessions s where s.source = 'telegram' and s.archived = 0 and s.hidden = 0
+order by s.last_activity_at desc limit %d''').fetchall()
+print(json.dumps([{'id': r[0], 'title': r[1], 'ts': r[2], 'n': r[3], 'preview': (r[4] or '')[:160]} for r in rows]))
+"""
+
+
+@router.get("/telegram/chats")
+def telegram_chats():
+    """Recent Telegram chats from the Jetson gateway's session store."""
+    def refetch():
+        rc, out, err = _ssh_py(TELEGRAM_SQL_TMPL % 10, timeout=30)
+        if rc != 0:
+            return None
+        idx = out.find("[")
+        if idx < 0:
+            return None
+        try:
+            rows = json.loads(out[idx:])
+        except json.JSONDecodeError:
+            return None
+        return {"date": _local_date(), "chats": rows}
+    return _cached_json("telegram-chats.json", ttl=120, refetch=refetch)
+
+
+VOICE_Q = "from:voice.google.com newer_than:30d"
+
+
+def _voice_parse(headers: dict, snippet: str) -> dict:
+    subj = headers.get("Subject", "")
+    frm = headers.get("From", "")
+    low = subj.lower()
+    if "voicemail" in low:
+        kind = "voicemail"
+    elif "missed call" in low:
+        kind = "missed call"
+    elif "text message" in low:
+        kind = "text"
+    else:
+        kind = "text"
+    # contact: quoted name in From ("(602) 123-4567") or trailing number in Subject
+    contact = frm.split("<")[0].strip().strip('"') or subj
+    # snippet: strip the Google Voice footer boilerplate and the "Google Voice" prefix
+    if snippet.startswith("Google Voice "):
+        snippet = snippet[len("Google Voice "):]
+    for marker in ("YOUR ACCOUNT HELP", "Help Center", "Google Voice. This email", "To respond to this text"):
+        idx = snippet.find(marker)
+        if idx > 0:
+            snippet = snippet[:idx]
+    return {"kind": kind, "contact": contact[:40], "subject": subj[:80],
+            "snippet": snippet.strip()[:140], "date": headers.get("Date", "")}
+
+
+def _fetch_voice_account(config_dir: str) -> tuple[bool, str, list[dict]]:
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+    gws_path = shutil.which("gws") or str(HOME / "AppData" / "Roaming" / "npm" / "gws.cmd")
+    if config_dir:
+        env["GOOGLE_WORKSPACE_CLI_CONFIG_DIR"] = os.path.normpath(config_dir)
+        env["GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND"] = "file"
+    args = [gws_path, "gmail", "users", "messages", "list", "--format", "json",
+            "--params", json.dumps({"userId": "me", "maxResults": 12, "q": VOICE_Q})]
+    body = None
+    for attempt in range(2):  # gws intermittently 403s back-to-back calls — retry clears it
+        rc, out, err = _sh(args, timeout=60, env=env)
+        if rc == 0:
+            body = _json_tail(out) or {}
+            break
+        time.sleep(1.5)
+    if body is None:
+        return False, (err or out)[:160], []
+    rows: list[dict] = []
+    for m in (body.get("messages") or [])[:12]:
+        params = {"userId": "me", "id": m.get("id"), "format": "metadata"}
+        got = None
+        for attempt in range(2):  # gws intermittently 403s on rapid gets — one retry clears it
+            rc2, out2, _ = _sh([gws_path, "gmail", "users", "messages", "get", "--format", "json",
+                                "--params", json.dumps(params)], timeout=45, env=env)
+            if rc2 == 0:
+                got = _json_tail(out2)
+                break
+            time.sleep(1.0)
+        if not got:
+            continue
+        headers = {h.get("name"): h.get("value") for h in (got.get("payload", {}).get("headers") or [])}
+        rows.append(_voice_parse(headers, got.get("snippet", "")))
+    return True, "", rows
+
+
+@router.get("/voice/activity")
+def voice_activity():
+    """Google Voice texts, missed calls and voicemails — they land as Gmail on each account."""
+    def refetch():
+        accounts = []
+        for a in _gws_accounts():
+            ok, err, rows = _fetch_voice_account(a["config_dir"])
+            accounts.append({"name": a["name"], "ok": ok, "error": err if not ok else "", "items": rows})
+        return {"date": _local_date(), "accounts": accounts}
+    return _cached_json("gws-voice.json", ttl=180, refetch=refetch)
+
+
 @router.delete("/calendar/event")
 def calendar_delete(body: dict = Body(...)):
     """Delete one event by id (read-back via delete response)."""
