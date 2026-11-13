@@ -5335,7 +5335,7 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
     const grid = el.parentElement
     const sx = e.clientX
     const sy = e.clientY
-    const s0 = layoutRef.current.sizes[id] || { w: WIDGETS[id].span, h: WIDGETS[id].rows }
+    const s0 = (layoutRef.current.sizes || {})[id] || { w: WIDGETS[id].span, h: WIDGETS[id].rows }
     const colW = () => grid.clientWidth / 12
     const rowH = 92
     const move = ev => {
@@ -5359,7 +5359,9 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
 
   function hide(id) {
     haptic('tap')
-    persist({ order: layout.order, hidden: Array.from(new Set([...layout.hidden, id])) })
+    // spread ...layout — persisting { order, hidden } alone would drop `sizes`
+    // and the next grid render crashes on layout.sizes['hero'] (blank page)
+    persist({ ...layout, hidden: Array.from(new Set([...layout.hidden, id])) })
   }
 
   function reorder(fromId, toId) {
@@ -5375,7 +5377,7 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
   return jsxs('div', { className: 'ao-grid12', children: [
     layout.order.filter(id => !hidden.has(id)).map(id => {
       const w = WIDGETS[id]
-      const size = layout.sizes[id] || { w: w.span, h: w.rows }
+      const size = (layout.sizes || {})[id] || { w: w.span, h: w.rows }
       const isDragging = dragging === id
       const isOver = overId === id && dragId.current && dragId.current !== id
       return jsxs('div', {
@@ -5440,14 +5442,20 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
       }, id) // stable key — ':over' keying remounted the whole card mid-drag
     }),
     layout.hidden.length > 0 && jsx('div', { className: 'ao-w-12 flex flex-wrap items-center gap-2 text-xs text-(--ui-text-tertiary)', children: [
-      jsx('span', { children: 'Hidden:' }),
-      layout.hidden.map(id => jsx('button', {
-        type: 'button',
-        className: 'ao-kbd',
-        title: 'Show again',
-        onClick: () => persist({ order: layout.order, hidden: layout.hidden.filter(x => x !== id) }),
-        children: '+ ' + (WIDGETS[id] ? WIDGETS[id].title : id)
-      }, id))
+    jsx('span', { children: 'Hidden:' }),
+    layout.hidden.map(id => jsx('button', {
+      type: 'button',
+      className: 'ao-kbd',
+      title: 'Show again',
+      onClick: () => persist({
+        ...layout,
+        hidden: layout.hidden.filter(x => x !== id),
+        // retired widgets were also dropped from the render order — re-append,
+        // or the chip "restores" a card that never appears
+        order: layout.order.includes(id) ? layout.order : [...layout.order, id]
+      }),
+      children: '+ ' + (WIDGETS[id] ? WIDGETS[id].title : id)
+    }, id))
     ] })
   ] })
 }
