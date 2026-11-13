@@ -752,6 +752,7 @@ const ConsoleStore = {
   subscribe(fn) { this._subs.add(fn); return () => this._subs.delete(fn) },
   emit() { for (const fn of this._subs) { try { fn() } catch { /* ignore */ } } },
   add(m) { this.msgs = [...this.msgs, m]; this.emit() },
+  reset() { this.msgs = []; this.emit() },
   setBusy(b) { this.busy = b; if (!b) this.current = null; this.emit() },
   async send(text) {
     const query = (text || '').trim()
@@ -3173,6 +3174,21 @@ function ConsoleCard({ compact = false }) {
         disabled: busy || !input.trim(),
         className: 'shrink-0 rounded-md border border-(--ui-stroke-secondary) px-3 py-2 text-xs uppercase tracking-wider text-(--ui-text-secondary) transition-colors enabled:hover:border-(--ui-accent) enabled:hover:text-(--ui-accent) disabled:opacity-40',
         children: busy ? '…' : 'Run'
+      }),
+      // new conversation — drops the rolling backend session so Jarvis forgets
+      // this chat's turns (typed AND voice share the same session)
+      jsx('button', {
+        onClick: async () => {
+          if (busy) return
+          try { await REST('/command/reset', { method: 'POST' }) } catch { /* still clear locally */ }
+          ConsoleStore.reset()
+          ConsoleStore.add({ role: 'jarvis', text: 'New conversation, sir — history cleared.' })
+        },
+        disabled: busy,
+        'aria-label': 'New conversation',
+        title: "New conversation — clears Jarvis's memory of this chat (typed + voice)",
+        className: 'ao-wbtn shrink-0 disabled:opacity-40',
+        children: '\u21ba'
       })
     ] }),
     !compact && jsx('div', { className: 'flex items-center gap-2 text-xs', children:
