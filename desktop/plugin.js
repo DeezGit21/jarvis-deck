@@ -1919,6 +1919,54 @@ function gwsTag(acct) {
   })
 }
 
+// Gmail deep link — the email in the /u/ slot selects the right signed-in
+// account regardless of tab order. #inbox opens the unread message, #all
+// opens any archived thread (Google Voice notifications).
+function gmailUrl(email, id, all) {
+  const u = encodeURIComponent(email || '0')
+  return 'https://mail.google.com/mail/u/' + u + '/#' + (all ? 'all' : 'inbox') + '/' + id
+}
+
+// Per-account email addresses (fetched once, cached backend-side for a week)
+function useGwsEmails() {
+  const emailQ = useQuery({ queryKey: ['agentos', 'gws-emails'], queryFn: () => REST('/gws/emails') })
+  return name => {
+    const a = ((emailQ.data && emailQ.data.accounts) || []).find(x => x.name === name)
+    return (a && a.email) || ''
+  }
+}
+
+// ↗ open-in-Gmail affordance for mail/voice rows (stops row click propagation)
+function GmailOpenBtn({ email, id, all, title }) {
+  return jsx('button', {
+    type: 'button',
+    className: 'ao-collapse shrink-0',
+    title: title || 'Open this message in Gmail',
+    onClick: e => {
+      e.stopPropagation()
+      haptic('tap')
+      openExternal(gmailUrl(email, id, all))
+    },
+    children: '\u2197'
+  })
+}
+
+// Card-header 'continue into the app' button — opens the source web app itself
+// (calendar/gmail/telegram/voice) so an inline action can flow into the real tool.
+function AppOpenBtn({ url, label, title }) {
+  return jsx('button', {
+    type: 'button',
+    className: 'ao-btn ml-2 text-[10px]',
+    title: title || ('Open ' + label + ' in the browser'),
+    onClick: e => {
+      e.stopPropagation()
+      haptic('tap')
+      openExternal(url)
+    },
+    children: label
+  })
+}
+
 function fmtWhen(when, allDay) {
   if (!when) return ''
   if (allDay) return 'all-day'
@@ -1951,6 +1999,7 @@ function CalendarCard() {
   const buckets = { today: [], tomorrow: [], later: [] }
   for (const r of rows) buckets[groupOf(r.when)].push(r)
   const failing = accounts.filter(a => !a.ok)
+  const emailOf = useGwsEmails()
   // write path — add an event to either account's primary calendar
   const [addOpen, setAddOpen] = useState(false)
   const [title, setTitle] = useState('')
@@ -1997,6 +2046,11 @@ function CalendarCard() {
           className: 'text-xs text-(--ui-accent) ml-2',
           onClick: () => q.refetch(),
           children: 'Refresh'
+        }),
+        jsx(AppOpenBtn, {
+          label: '\u2197 calendar',
+          url: 'https://calendar.google.com/calendar/u/0/r?authuser=' + encodeURIComponent(emailOf(acctNames[0] || 'personal')),
+          title: 'Open Google Calendar in the browser'
         }),
         jsx('button', {
           type: 'button',
@@ -2053,6 +2107,18 @@ function CalendarCard() {
                         e.summary,
                         e.calendar && !/primary/i.test(e.calendar) && jsx('span', { className: 'ml-1.5 text-[0.625rem] text-(--ui-text-quaternary)', children: e.calendar })
                       ] }),
+                      e.id && jsx('button', {
+                        type: 'button',
+                        className: 'ao-collapse shrink-0',
+                        title: 'Open this event in Google Calendar',
+                        onClick: ev => {
+                          ev.stopPropagation()
+                          haptic('tap')
+                          openExternal('https://calendar.google.com/calendar/u/0/r/eventedit/' + e.id +
+                            '?authuser=' + encodeURIComponent(emailOf(e.acct)))
+                        },
+                        children: '\u2197'
+                      }),
                       gwsTag(e.acct)
                     ]
                   }, e.acct + e.when + e.summary + i))
@@ -2077,6 +2143,7 @@ function MailCard() {
   const accounts = (d && d.accounts) || []
   const rows = accounts.flatMap(a => (a.items || []).map(m => ({ ...m, acct: a.name })))
   const failing = accounts.filter(a => !a.ok)
+  const emailOf = useGwsEmails()
   return jsx(AoCard, {
     label: 'inbox \u00b7 unread \u00b7 both accounts',
     delay: 240,
@@ -2088,6 +2155,7 @@ function MailCard() {
           onClick: () => q.refetch(),
           children: 'Refresh'
         }),
+        jsx(AppOpenBtn, { label: '\u2197 gmail', url: 'https://mail.google.com', title: 'Open Gmail in the browser' }),
         jsx('button', {
           type: 'button',
           className: 'ao-btn ml-2 text-[10px]',
@@ -2121,6 +2189,7 @@ function MailCard() {
                     ] }),
                     m.snippet && jsx('div', { className: 'mt-0.5 truncate text-[0.625rem] text-(--ui-text-tertiary)', children: m.snippet })
                   ] }),
+                  m.id && jsx(GmailOpenBtn, { email: emailOf(m.acct), id: m.id }),
                   gwsTag(m.acct)
                 ]
               }, (m.id || i) + '-' + m.acct)
@@ -2149,6 +2218,35 @@ const VOICE_KIND_STYLE = {
   'voicemail': { background: 'rgba(211,153,34,.12)', color: '#d29922' }
 }
 
+// Inline reply composer shared by the telegram + voice cards: type, hit Enter
+// or SEND, the message actually goes out. stopPropagation so the row's
+// 'ask jarvis' click doesn't fire while typing. Enter sends, Escape closes.
+function ReplyComposer({ placeholder, busy, err, onSend, onCancel }) {
+  const [txt, setTxt] = useState('')
+  return jsxs('div', { className: 'mt-1.5 flex flex-wrap items-center gap-2', onClick: e => e.stopPropagation(), children: [
+    jsx('input', {
+      value: txt,
+      onChange: e => setTxt(e.target.value),
+      onKeyDown: e => {
+        if (e.key === 'Enter' && txt.trim() && !busy) onSend(txt.trim())
+        if (e.key === 'Escape') onCancel()
+      },
+      placeholder,
+      autoFocus: true,
+      className: 'min-w-0 flex-1 rounded-md border border-(--ui-accent)/40 bg-[rgba(6,10,16,.6)] px-2 py-1 font-mono text-xs text-(--ui-text-primary) outline-none focus:border-(--ui-accent)'
+    }),
+    jsx('button', {
+      type: 'button', className: 'ao-btn', disabled: busy || !txt.trim(),
+      onClick: () => onSend(txt.trim()),
+      children: busy ? 'sending\u2026' : 'SEND'
+    }),
+    jsx('button', { type: 'button', className: 'ao-btn', onClick: onCancel, children: '\u2715' }),
+    err && jsx('span', { className: 'w-full text-[0.625rem] text-[#f85149]', children: err })
+  ] })
+}
+
+// telegram & google voice cards follow
+
 function TelegramCard() {
   const q = useQuery({
     queryKey: ['agentos', 'telegram-chats'],
@@ -2167,14 +2265,38 @@ function TelegramCard() {
     const kind = c.chat_type === 'group' ? 'group' : c.chat_type === 'bot' ? 'bot' : 'dm'
     return { started, kind }
   }
+  // inline reply: the gateway bot sends as itself into D's DM — message_id
+  // returned by the API is the read-back verification
+  const [tgReply, setTgReply] = useState(null)
+  const [tgBusy, setTgBusy] = useState(false)
+  const [tgErr, setTgErr] = useState('')
+  async function sendTgReply(chatId, text, key) {
+    setTgBusy(true)
+    setTgErr('')
+    try {
+      await REST('/telegram/reply', { method: 'POST', body: { chat_id: chatId, text } })
+      setTgReply(null)
+      Chimes.play('up')
+      q.refetch()
+    } catch (e) {
+      setTgErr(String((e && e.message) || e).slice(0, 200))
+    }
+    setTgBusy(false)
+  }
   return jsx(AoCard, {
     label: 'telegram \u00b7 recent chats',
     delay: 260,
-    right: jsx('button', {
-      type: 'button',
-      className: 'text-xs text-(--ui-accent)',
-      onClick: () => q.refetch(),
-      children: 'Refresh'
+    right: jsxs(Fragment, {
+      children: [
+        jsx(AppOpenBtn, { label: '\u2197 telegram', url: 'https://web.telegram.org/k/#@Darins_Hermes_bot',
+          title: 'Open Telegram Web at the bot chat' }),
+        jsx('button', {
+          type: 'button',
+          className: 'text-xs text-(--ui-accent)',
+          onClick: () => q.refetch(),
+          children: 'Refresh'
+        })
+      ]
     }),
     children: jsxs(Fragment, {
       children: [
@@ -2205,8 +2327,22 @@ function TelegramCard() {
                     jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.625rem] text-(--ui-text-quaternary)', children: fmtTgAgo(c.ts) })
                   ] }),
                   c.preview && jsx('div', { className: 'mt-0.5 truncate text-[0.625rem] text-(--ui-text-tertiary)', children: c.preview }),
-                  jsx('div', { className: 'mt-0.5 text-[0.5625rem] text-(--ui-text-quaternary)', children: 'dm \u00b7 you \u2194 @Darins_Hermes_bot \u00b7 since ' + meta.started })
+                  jsx('div', { className: 'mt-0.5 text-[0.5625rem] text-(--ui-text-quaternary)', children: 'dm \u00b7 you \u2194 @Darins_Hermes_bot \u00b7 since ' + meta.started }),
+                  tgReply === (c.id || i) && jsx(ReplyComposer, {
+                    placeholder: 'reply as @Darins_Hermes_bot \u2014 Enter sends',
+                    busy: tgBusy,
+                    err: tgErr,
+                    onSend: t => sendTgReply(c.chat_id || '6936161944', t, c.id || i),
+                    onCancel: () => { setTgReply(null); setTgErr('') }
+                  })
                 ] }),
+                jsx('button', {
+                  type: 'button',
+                  className: 'ao-collapse shrink-0',
+                  title: 'Reply inline — sends as the bot into this chat',
+                  onClick: e => { e.stopPropagation(); haptic('tap'); setTgReply(tgReply === (c.id || i) ? null : (c.id || i)); setTgErr('') },
+                  children: '\u21a9'
+                }),
                 jsx('span', { className: 'shrink-0 font-mono text-[0.625rem] text-(--ui-text-quaternary)', children: c.n })
               ]
             }, c.id || i)
@@ -2227,14 +2363,39 @@ function VoiceCard() {
   const accounts = (d && d.accounts) || []
   const rows = accounts.flatMap(a => (a.items || []).map(v => ({ ...v, acct: a.name })))
   const failing = accounts.filter(a => !a.ok)
+  // inline reply: GV texts arrive as Gmail from voice.google.com whose footer
+  // says 'to respond to this text message, reply to this email' — sending the
+  // Gmail thread reply IS the SMS reply. The gmail message id is the handle.
+  const [vReply, setVReply] = useState(null) // gmail message id
+  const [vBusy, setVBusy] = useState(false)
+  const [vErr, setVErr] = useState('')
+  const voiceEmailOf = useGwsEmails()
+  async function sendVoiceReply(account, mid, text) {
+    setVBusy(true)
+    setVErr('')
+    try {
+      await REST('/voice/reply', { method: 'POST', body: { account, message_id: mid, text } })
+      setVReply(null)
+      Chimes.play('up')
+      q.refetch()
+    } catch (e) {
+      setVErr(String((e && e.message) || e).slice(0, 200))
+    }
+    setVBusy(false)
+  }
   return jsx(AoCard, {
     label: 'google voice \u00b7 texts \u00b7 calls \u00b7 voicemail',
     delay: 300,
-    right: jsx('button', {
-      type: 'button',
-      className: 'text-xs text-(--ui-accent)',
-      onClick: () => q.refetch(),
-      children: 'Refresh'
+    right: jsxs(Fragment, {
+      children: [
+        jsx(AppOpenBtn, { label: '\u2197 voice', url: 'https://voice.google.com', title: 'Open Google Voice in the browser' }),
+        jsx('button', {
+          type: 'button',
+          className: 'text-xs text-(--ui-accent)',
+          onClick: () => q.refetch(),
+          children: 'Refresh'
+        })
+      ]
     }),
     children: jsxs(Fragment, {
       children: [
@@ -2245,8 +2406,9 @@ function VoiceCard() {
         d && jsxs(Fragment, {
           children: [
             rows.length === 0 && !failing.length && jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'no google voice activity in the last 30 days' }),
-            jsx('div', { className: 'space-y-1', children: rows.map((v, i) =>
-              jsxs('div', {
+            jsx('div', { className: 'space-y-1', children: rows.map((v, i) => {
+              const vkey = v.id || ((v.contact || i) + '-' + v.date + '-' + i)
+              return jsxs('div', {
                 className: 'ao-in flex items-baseline gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
                 style: { animationDelay: 150 + i * 70 + 'ms', cursor: 'pointer' },
                 onClick: () => { Chimes.play('up'); ConsoleStore.send('my google voice had a ' + v.kind + ' with ' + v.contact + ' \u2014 find that message in my gmail, read the full conversation, and tell me what they need') },
@@ -2262,12 +2424,28 @@ function VoiceCard() {
                       jsx('span', { className: 'shrink-0 text-xs font-semibold text-(--ui-text-primary)', children: v.contact }),
                       jsx('span', { className: 'truncate text-xs text-(--ui-text-secondary)', children: v.snippet }),
                       v.date && jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.625rem] text-(--ui-text-quaternary)', children: v.date.slice(5, 16) })
-                    ] })
+                    ] }),
+                    vReply === vkey && jsx(ReplyComposer, {
+                      placeholder: 'reply to ' + v.contact + ' via ' + v.acct + ' \u2014 Enter sends the text',
+                      busy: vBusy,
+                      err: vErr,
+                      onSend: t => sendVoiceReply(v.acct, v.id, t),
+                      onCancel: () => { setVReply(null); setVErr('') }
+                    })
                   ] }),
+                  v.id && jsx(GmailOpenBtn, { email: voiceEmailOf(v.acct), id: v.id, all: true,
+                    title: 'Open this thread in Gmail' }),
+                  v.id && jsx('button', {
+                    type: 'button',
+                    className: 'ao-collapse shrink-0',
+                    title: 'Reply inline — sends a text from your Google Voice number',
+                    onClick: e => { e.stopPropagation(); haptic('tap'); setVReply(vReply === vkey ? null : vkey); setVErr('') },
+                    children: '\u21a9'
+                  }),
                   gwsTag(v.acct)
                 ]
-              }, (v.contact || i) + '-' + v.date + '-' + i)
-            ) }),
+              }, vkey)
+            }) }),
             failing.map(a => jsx('div', { className: 'mt-2 truncate text-[0.625rem] text-(--ui-text-quaternary)', title: a.error, children: a.name + ': voice unavailable' }, 'verr-' + a.name))
           ]
         })

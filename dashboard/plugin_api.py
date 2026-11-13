@@ -6,6 +6,7 @@ venv under ~/.hermes/agentos/venv and write JSON snapshots to the cache dir.
 """
 from __future__ import annotations
 
+import base64
 import csv
 import datetime as _dt
 import difflib
@@ -497,6 +498,65 @@ def telegram_chats():
     return _cached_json("telegram-chats.json", ttl=120, refetch=refetch)
 
 
+TELEGRAM_REPLY_TMPL = """
+import json, urllib.request, base64
+tok = None
+for line in open('/home/d/.hermes/.env', errors='ignore'):
+    if line.startswith('TELEGRAM_BOT_TOKEN='):
+        tok = line.strip().split('=', 1)[1]
+if not tok:
+    print(json.dumps({'ok': False, 'error': 'no TELEGRAM_BOT_TOKEN in gateway .env'}))
+    raise SystemExit
+text = base64.b64decode('%s').decode('utf-8')
+req = urllib.request.Request('https://api.telegram.org/bot' + tok + '/sendMessage',
+    data=json.dumps({'chat_id': '%s', 'text': text}).encode(),
+    headers={'Content-Type': 'application/json'})
+try:
+    r = json.loads(urllib.request.urlopen(req, timeout=15).read())
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': str(e)[:200]}))
+    raise SystemExit
+res = r.get('result') or {}
+print(json.dumps({'ok': bool(r.get('ok')), 'message_id': res.get('message_id'),
+                  'chat_id': (res.get('chat') or {}).get('id')}))
+"""
+
+
+@router.post("/telegram/reply")
+def telegram_reply(body: dict = Body(...)):
+    """Send a Telegram message as the gateway bot (inline reply from the deck).
+
+    Body: {chat_id, text}. The gateway's own .env holds the bot token — it
+    never leaves the Jetson; the reply text travels base64-encoded over ssh
+    stdin (same no-quoting pattern as every other _ssh_py call).
+    """
+    text = str(body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    if len(text) > 3000:
+        raise HTTPException(status_code=400, detail="reply too long (3000 char max)")
+    chat_id = str(body.get("chat_id") or "").strip() or "6936161944"
+    b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    rc, out, err = _ssh_py(TELEGRAM_REPLY_TMPL % (b64, chat_id), timeout=40)
+    if rc != 0:
+        raise HTTPException(status_code=502, detail=f"telegram send failed: {(err or out).strip()[:200]}")
+    try:
+        res = json.loads(out[out.find("{"):])
+    except (ValueError, json.JSONDecodeError):
+        raise HTTPException(status_code=502, detail="telegram send returned unreadable output") from None
+    if not res.get("ok"):
+        raise HTTPException(status_code=502, detail=f"telegram send failed: {res.get('error', 'unknown')}")
+    # drop the chats cache so the new message shows in the preview on next poll
+    tc = CACHE / "telegram-chats.json"
+    if tc.exists():
+        try:
+            tc.unlink()
+        except OSError:
+            pass
+    return {"ok": True, "message_id": res.get("message_id"), "chat_id": res.get("chat_id"),
+            "verified": bool(res.get("message_id"))}
+
+
 VOICE_Q = "from:voice.google.com newer_than:30d"
 
 
@@ -556,7 +616,9 @@ def _fetch_voice_account(config_dir: str) -> tuple[bool, str, list[dict]]:
         if not got:
             continue
         headers = {h.get("name"): h.get("value") for h in (got.get("payload", {}).get("headers") or [])}
-        rows.append(_voice_parse(headers, got.get("snippet", "")))
+        row = _voice_parse(headers, got.get("snippet", ""))
+        row["id"] = str(got.get("id") or "")  # gmail message id — the reply handle
+        rows.append(row)
     return True, "", rows
 
 
@@ -570,6 +632,88 @@ def voice_activity():
             accounts.append({"name": a["name"], "ok": ok, "error": err if not ok else "", "items": rows})
         return {"date": _local_date(), "accounts": accounts}
     return _cached_json("gws-voice.json", ttl=180, refetch=refetch)
+
+
+@router.get("/gws/emails")
+def gws_emails():
+    """Account email addresses (for Gmail deep links) — cached on disk a week."""
+    CACHE.mkdir(parents=True, exist_ok=True)
+    path = CACHE / "gws-account-emails.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        data = {}
+    changed = False
+    out = []
+    for a in _gws_accounts():
+        email = data.get(a["name"])
+        if not email:
+            body = None
+            for _attempt in range(2):  # gws intermittently 403s back-to-back calls
+                rc, outp, _err = _gws_run(["gmail", "users", "getProfile", "--format", "json",
+                                           "--params", json.dumps({"userId": "me"})],
+                                          a["config_dir"], timeout=60)
+                if rc == 0:
+                    body = _json_tail(outp)
+                    break
+                time.sleep(1.5)
+            email = str(((body or {}).get("emailAddress")) or "")
+            if email:
+                data[a["name"]] = email
+                changed = True
+        out.append({"name": a["name"], "email": email or ""})
+    if changed:
+        try:
+            path.write_text(json.dumps(data), encoding="utf-8")
+        except OSError:
+            pass
+    return {"accounts": out}
+
+
+@router.post("/voice/reply")
+def voice_reply(body: dict = Body(...)):
+    """Reply to a Google Voice text from the deck.
+
+    GV texts arrive as Gmail from voice.google.com and each notification says
+    'To respond to this text message, reply to this email' — replying in that
+    thread sends the text through the GV number. We send via `gws gmail +reply`
+    (threading handled by the helper) on the account that owns the thread.
+    Body: {account, message_id, text}.
+    """
+    text = str(body.get("text") or "").strip()
+    mid = str(body.get("message_id") or "").strip()
+    account = str(body.get("account") or "").strip().lower()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    if not mid:
+        raise HTTPException(status_code=400, detail="message_id is required")
+    if len(text) > 1600:
+        raise HTTPException(status_code=400, detail="reply too long (1600 char max)")
+    target = next((a for a in _gws_accounts() if a["name"].lower() == account), None)
+    if target is None:
+        raise HTTPException(status_code=400, detail=f"unknown account '{account}'")
+    # body goes as a CLI argv — subprocess list form, no shell, so quotes and
+    # newlines pass through untouched. The 403-retry rule applies here too.
+    args = ["gmail", "+reply", "--message-id", mid, "--body", text]
+    rc, out, err = 1, "", ""
+    for attempt in range(2):
+        rc, out, err = _gws_run(args, target["config_dir"], timeout=90)
+        if rc == 0:
+            break
+        time.sleep(1.5)
+    if rc != 0:
+        raise HTTPException(status_code=502, detail=f"voice reply failed: {(err or out).strip()[:300]}")
+    sent = _json_tail(out) or {}
+    sent_id = str(sent.get("id") or "")
+    # drop the voice cache so the sent reply shows on next poll
+    vc = CACHE / "gws-voice.json"
+    if vc.exists():
+        try:
+            vc.unlink()
+        except OSError:
+            pass
+    return {"ok": True, "account": target["name"], "sent_id": sent_id,
+            "verified": bool(sent_id)}
 
 
 @router.delete("/calendar/event")
