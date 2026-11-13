@@ -72,7 +72,7 @@ html.ao-companion, html.ao-companion body, html.ao-companion #root { background:
 .ao-hud-fill { left: 8px; right: 8px; top: 8px; transform: none; width: auto;
   background: color-mix(in srgb, var(--ui-card) 55%, transparent); }
 
-.ao-label { font-size: .6875rem; text-transform: uppercase; letter-spacing: .14em; color: var(--ui-text-tertiary); }
+.ao-label { font-size: .8125rem; text-transform: uppercase; letter-spacing: .14em; color: var(--ui-text-tertiary); }
 .ao-num { font-variant-numeric: tabular-nums; font-size: 1.6rem; font-weight: 600; line-height: 1.1;
   text-shadow: 0 0 18px color-mix(in srgb, var(--ui-accent) 35%, transparent); }
 .ao-led { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor;
@@ -130,13 +130,13 @@ html.ao-companion, html.ao-companion body, html.ao-companion #root { background:
 .ao-kbd { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 7px;
   border: 1px solid var(--ui-stroke-secondary);
   background: color-mix(in srgb, var(--ui-card) 80%, transparent);
-  font: 500 0.6875rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 500 0.78rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--ui-text-tertiary); }
 .ao-press { transition: color .25s cubic-bezier(.23,1,.32,1), transform .25s cubic-bezier(.23,1,.32,1), border-color .25s cubic-bezier(.23,1,.32,1), box-shadow .25s cubic-bezier(.23,1,.32,1); }
 .ao-press:active { transform: scale(.97); }
 .ao-btn { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 8px;
   border: 1px solid var(--ui-stroke-secondary);
-  font: 500 0.7rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 500 0.8rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--ui-text-secondary);
   cursor: pointer;
   transition: transform .15s cubic-bezier(.23,1,.32,1), border-color .2s, color .2s;
@@ -230,7 +230,7 @@ html.ao-companion, html.ao-companion body, html.ao-companion #root { background:
 .ao-vision-img { max-height: 180px; border-radius: 8px; border: 1px solid var(--ui-stroke-secondary); }
 .ao-runbtn { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 4px 10px;
   border-radius: 8px; border: 1px solid var(--ui-stroke-secondary); text-align: left;
-  font: 500 0.75rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 500 0.85rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--ui-text-secondary); transition: border-color .2s ease, color .2s ease; }
 .ao-runbtn:hover { border-color: var(--ui-accent); color: var(--ui-accent); }
 .ao-mini-orb { width: 26px; height: 26px; border-radius: 50%; flex: none;
@@ -247,6 +247,9 @@ html.ao-companion, html.ao-companion body, html.ao-companion #root { background:
 .ao-grid12 .ao-card .ao-body-inner::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ui-accent) 25%, transparent); border-radius: 4px; }
 .ao-grid12 .ao-hero { height: 100%; overflow: hidden; }
 
+/* readability bump: body rows were 12px — D asked for larger text */
+.text-xs { font-size: .8125rem; line-height: 1.45; }
+
 /* --- resize handle (customize mode) --- */
 .ao-resize { position: absolute; right: 3px; bottom: 3px; width: 20px; height: 20px; z-index: 40;
   display: flex; align-items: center; justify-content: center; cursor: nwse-resize; touch-action: none;
@@ -258,7 +261,7 @@ html.ao-companion, html.ao-companion body, html.ao-companion #root { background:
 /* --- widget chrome (customize mode) --- */
 .ao-wbtn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
   border-radius: 6px; border: 1px solid transparent; color: var(--ui-text-quaternary);
-  cursor: pointer; font-size: .7rem; line-height: 1; transition: color .15s, border-color .15s; }
+  cursor: pointer; font-size: .8rem; line-height: 1; transition: color .15s, border-color .15s; }
 .ao-wbtn:hover { color: var(--ui-text-primary); border-color: var(--ui-stroke-secondary); }
 .ao-wbtn[draggable='true'] { cursor: grab; }
 .ao-tabline { position: absolute; bottom: 0; height: 2px; width: 20%;
@@ -1859,7 +1862,7 @@ function BriefCard() {
           children: 'No brief for today yet. Goals, live metrics, service status and open tasks feed it.'
         }),
         runRes && (runRes.followUps || []).length > 0 && jsxs('div', { className: 'mt-3 flex flex-col gap-1.5', children: [
-          jsx('div', { className: 'font-medium text-[0.65rem] uppercase tracking-wider text-(--ui-text-tertiary)', children: 'suggested follow-ups — click to run' }),
+          jsx('div', { className: 'font-medium text-[0.78rem] uppercase tracking-wider text-(--ui-text-tertiary)', children: 'suggested follow-ups — click to run' }),
           runRes.followUps.map((a, i) => jsx('button', {
             type: 'button',
             className: 'ao-runbtn',
@@ -1869,10 +1872,10 @@ function BriefCard() {
         ] }),
         runRes && jsx('details', { className: 'mt-2 text-xs text-(--ui-text-tertiary)', children: [
           jsx('summary', { className: 'cursor-pointer select-none', children: 'spoken script' }),
-          jsx('div', { className: 'mt-1 whitespace-pre-wrap text-[0.7rem] leading-relaxed', children: runRes.speech })
+          jsx('div', { className: 'mt-1 whitespace-pre-wrap text-[0.8rem] leading-relaxed', children: runRes.speech })
         ] }),
         jsx('div', {
-          className: 'mt-3 border-t border-(--ui-stroke-secondary) pt-2 text-right font-mono text-[0.6875rem] text-(--ui-text-quaternary)',
+          className: 'mt-3 border-t border-(--ui-stroke-secondary) pt-2 text-right font-mono text-[0.8125rem] text-(--ui-text-quaternary)',
           children: now.toLocaleTimeString('en-US', { hour12: false })
         })
       ]
@@ -1955,7 +1958,7 @@ function MetricsCard() {
               jsxs('div', { className: 'mb-2 flex items-center justify-between', children: [
                 jsx('div', { className: 'ao-label', children: 'this week\u2019s leads' }),
                 jsx('button', {
-                  type: 'button', className: 'ao-btn text-[10px]',
+                  type: 'button', className: 'ao-btn text-[12px]',
                   onClick: () => { Chimes.play('up'); ConsoleStore.send('summarize this week\u2019s leads from the hub: who they are, where they came from, and which are worth calling first') },
                   children: '\uD83E\uDD16 ASK JARVIS'
                 })
@@ -1966,10 +1969,10 @@ function MetricsCard() {
               !leadsQ.isFetching && leads.map((L, i) => jsxs('div', { className: 'ao-in mb-1.5 rounded-md border border-(--ui-stroke-secondary) px-2.5 py-1.5', style: { animationDelay: i * 40 + 'ms' }, children: [
                 jsxs('div', { className: 'flex items-baseline gap-2 text-xs', children: [
                   jsx('span', { className: 'font-semibold truncate text-(--ui-text-primary)', children: L.name }),
-                  jsx('span', { className: 'shrink-0 rounded px-1 py-px font-mono text-[9px] uppercase tracking-wide', style: { background: 'rgba(211,153,34,.12)', color: '#d29922' }, children: L.status || 'new' }),
-                  jsx('span', { className: 'ml-auto shrink-0 font-mono text-[10px] text-(--ui-text-quaternary)', children: L.created })
+                  jsx('span', { className: 'shrink-0 rounded px-1 py-px font-mono text-[11px] uppercase tracking-wide', style: { background: 'rgba(211,153,34,.12)', color: '#d29922' }, children: L.status || 'new' }),
+                  jsx('span', { className: 'ml-auto shrink-0 font-mono text-[12px] text-(--ui-text-quaternary)', children: L.created })
                 ] }),
-                jsxs('div', { className: 'mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[10px] text-(--ui-text-tertiary)', children: [
+                jsxs('div', { className: 'mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[12px] text-(--ui-text-tertiary)', children: [
                   L.phone && jsx('span', { children: L.phone }),
                   L.email && jsx('span', { children: L.email }),
                   L.source && jsx('span', { children: 'via ' + L.source }),
@@ -1994,7 +1997,7 @@ const GWS_TAG_STYLE = {
 function gwsTag(acct) {
   const st = GWS_TAG_STYLE[String(acct).toLowerCase()] || { background: 'rgba(148,163,184,.12)', color: '#94a3b8' }
   return jsx('span', {
-    className: 'shrink-0 rounded px-1 py-px font-mono text-[9px] uppercase tracking-wide',
+    className: 'shrink-0 rounded px-1 py-px font-mono text-[11px] uppercase tracking-wide',
     style: st,
     children: acct
   })
@@ -2037,7 +2040,7 @@ function GmailOpenBtn({ email, id, all, title }) {
 function AppOpenBtn({ url, label, title }) {
   return jsx('button', {
     type: 'button',
-    className: 'ao-btn ml-2 text-[10px]',
+    className: 'ao-btn ml-2 text-[12px]',
     title: title || ('Open ' + label + ' in the browser'),
     onClick: e => {
       e.stopPropagation()
@@ -2135,7 +2138,7 @@ function CalendarCard() {
         }),
         jsx('button', {
           type: 'button',
-          className: 'ao-btn ml-2 text-[10px]',
+          className: 'ao-btn ml-2 text-[12px]',
           onClick: () => { Chimes.play('up'); ConsoleStore.send('read my calendar (both accounts) and plan my day: time blocks, conflicts, and what to push') },
           children: '\uD83E\uDD16 ASK JARVIS'
         })
@@ -2165,10 +2168,10 @@ function CalendarCard() {
                 jsx('input', { className: fld + ' w-20', placeholder: '14:00', value: time, onChange: e => setTime(e.target.value) }),
                 jsx('select', { className: fld, value: dur, onChange: e => setDur(e.target.value),
                   children: ['30', '45', '60', '90', '120'].map(n => jsx('option', { value: n, children: n + ' min' }, n)) }),
-                jsx('button', { type: 'button', className: 'ao-btn text-[10px]', onClick: submitAdd, disabled: adding,
+                jsx('button', { type: 'button', className: 'ao-btn text-[12px]', onClick: submitAdd, disabled: adding,
                   children: adding ? 'adding\u2026' : 'ADD TO CALENDAR' })
               ] }),
-              addMsg && jsx('div', { className: 'mt-2 text-[0.625rem] font-mono text-(--ui-text-tertiary)', children: addMsg })
+              addMsg && jsx('div', { className: 'mt-2 text-[0.75rem] font-mono text-(--ui-text-tertiary)', children: addMsg })
             ] }),
             rows.length === 0 && !failing.length && jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'nothing on the calendar in the next 2 days' }),
             ['today', 'tomorrow', 'later'].map(g => {
@@ -2183,10 +2186,10 @@ function CalendarCard() {
                     onClick: () => { Chimes.play('up'); ConsoleStore.send('tell me about the "' + e.summary + '" event (' + (e.all_day ? 'all-day' : fmtWhen(e.when)) + ') on my ' + e.acct + ' calendar') },
                     title: 'Ask JARVIS about this event',
                     children: [
-                      jsx('span', { className: 'w-16 shrink-0 font-mono text-[0.6875rem] text-(--ui-text-tertiary)', children: fmtWhen(e.when, e.all_day) }),
+                      jsx('span', { className: 'w-16 shrink-0 font-mono text-[0.8125rem] text-(--ui-text-tertiary)', children: fmtWhen(e.when, e.all_day) }),
                       jsxs('span', { className: 'min-w-0 flex-1 truncate text-(--ui-text-secondary)', children: [
                         e.summary,
-                        e.calendar && !/primary/i.test(e.calendar) && jsx('span', { className: 'ml-1.5 text-[0.625rem] text-(--ui-text-quaternary)', children: e.calendar })
+                        e.calendar && !/primary/i.test(e.calendar) && jsx('span', { className: 'ml-1.5 text-[0.75rem] text-(--ui-text-quaternary)', children: e.calendar })
                       ] }),
                       e.id && jsx('button', {
                         type: 'button',
@@ -2206,7 +2209,7 @@ function CalendarCard() {
                 })
               ] }, g)
             }),
-            failing.map(a => jsx('div', { className: 'mt-2 truncate text-[0.625rem] text-(--ui-text-quaternary)', title: a.error, children: a.name + ': calendar unavailable' }, 'err-' + a.name))
+            failing.map(a => jsx('div', { className: 'mt-2 truncate text-[0.75rem] text-(--ui-text-quaternary)', title: a.error, children: a.name + ': calendar unavailable' }, 'err-' + a.name))
           ]
         })
       ]
@@ -2239,7 +2242,7 @@ function MailCard() {
         jsx(AppOpenBtn, { label: '\u2197 gmail', url: 'https://mail.google.com', title: 'Open Gmail in the browser' }),
         jsx('button', {
           type: 'button',
-          className: 'ao-btn ml-2 text-[10px]',
+          className: 'ao-btn ml-2 text-[12px]',
           onClick: () => { Chimes.play('up'); ConsoleStore.send('triage my unread email across both accounts: what needs a reply today, what can wait, what is noise') },
           children: '\uD83E\uDD16 ASK JARVIS'
         })
@@ -2266,16 +2269,16 @@ function MailCard() {
                     jsxs('span', { className: 'flex items-baseline gap-2', children: [
                       jsx('span', { className: 'shrink-0 max-w-[9rem] truncate text-xs font-semibold text-(--ui-text-primary)', children: m.from || '(unknown)' }),
                       jsx('span', { className: 'truncate text-xs text-(--ui-text-secondary)', children: m.subject }),
-                      m.date && jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.625rem] text-(--ui-text-quaternary)', children: m.date })
+                      m.date && jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: m.date })
                     ] }),
-                    m.snippet && jsx('div', { className: 'mt-0.5 truncate text-[0.625rem] text-(--ui-text-tertiary)', children: m.snippet })
+                    m.snippet && jsx('div', { className: 'mt-0.5 truncate text-[0.75rem] text-(--ui-text-tertiary)', children: m.snippet })
                   ] }),
                   m.id && jsx(GmailOpenBtn, { email: emailOf(m.acct), id: m.id }),
                   gwsTag(m.acct)
                 ]
               }, (m.id || i) + '-' + m.acct)
             ) }),
-            failing.map(a => jsx('div', { className: 'mt-2 truncate text-[0.625rem] text-(--ui-text-quaternary)', title: a.error, children: a.name + ': inbox unavailable' }, 'err-' + a.name))
+            failing.map(a => jsx('div', { className: 'mt-2 truncate text-[0.75rem] text-(--ui-text-quaternary)', title: a.error, children: a.name + ': inbox unavailable' }, 'err-' + a.name))
           ]
         })
       ]
@@ -2322,7 +2325,7 @@ function ReplyComposer({ placeholder, busy, err, onSend, onCancel }) {
       children: busy ? 'sending\u2026' : 'SEND'
     }),
     jsx('button', { type: 'button', className: 'ao-btn', onClick: onCancel, children: '\u2715' }),
-    err && jsx('span', { className: 'w-full text-[0.625rem] text-[#f85149]', children: err })
+    err && jsx('span', { className: 'w-full text-[0.75rem] text-[#f85149]', children: err })
   ] })
 }
 
@@ -2381,7 +2384,7 @@ function TelegramCard() {
     }),
     children: jsxs(Fragment, {
       children: [
-        jsx('div', { className: 'mb-1 text-[0.625rem] text-(--ui-text-quaternary)', children: 'each row = a separate conversation thread with your bot \u00b7 click for JARVIS to read the full thread' }),
+        jsx('div', { className: 'mb-1 text-[0.75rem] text-(--ui-text-quaternary)', children: 'each row = a separate conversation thread with your bot \u00b7 click for JARVIS to read the full thread' }),
         q.isLoading && jsxs('div', { className: 'space-y-3', children: [
           jsx(Skel, { h: '.9rem' }), jsx(Skel, { h: '.9rem', delay: 120 }), jsx(Skel, { h: '.9rem', delay: 240 })
         ] }),
@@ -2405,9 +2408,9 @@ function TelegramCard() {
                       children: meta.kind
                     }),
                     jsx('span', { className: 'truncate text-xs font-semibold text-(--ui-text-primary)', children: c.title }),
-                    jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.625rem] text-(--ui-text-quaternary)', children: fmtTgAgo(c.ts) })
+                    jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: fmtTgAgo(c.ts) })
                   ] }),
-                  c.preview && jsx('div', { className: 'mt-0.5 truncate text-[0.625rem] text-(--ui-text-tertiary)', children: c.preview }),
+                  c.preview && jsx('div', { className: 'mt-0.5 truncate text-[0.75rem] text-(--ui-text-tertiary)', children: c.preview }),
                   jsx('div', { className: 'mt-0.5 text-[0.5625rem] text-(--ui-text-quaternary)', children: 'dm \u00b7 you \u2194 @Darins_Hermes_bot \u00b7 since ' + meta.started }),
                   tgReply === (c.id || i) && jsx(ReplyComposer, {
                     placeholder: 'reply as @Darins_Hermes_bot \u2014 Enter sends',
@@ -2424,7 +2427,7 @@ function TelegramCard() {
                   onClick: e => { e.stopPropagation(); haptic('tap'); setTgReply(tgReply === (c.id || i) ? null : (c.id || i)); setTgErr('') },
                   children: '\u21a9'
                 }),
-                jsx('span', { className: 'shrink-0 font-mono text-[0.625rem] text-(--ui-text-quaternary)', children: c.n })
+                jsx('span', { className: 'shrink-0 font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: c.n })
               ]
             }, c.id || i)
           })
@@ -2486,7 +2489,7 @@ function VoiceCard() {
     }),
     children: jsxs(Fragment, {
       children: [
-        jsx('div', { className: 'mb-1 text-[0.625rem] text-(--ui-text-quaternary)',
+        jsx('div', { className: 'mb-1 text-[0.75rem] text-(--ui-text-quaternary)',
           children: 'business line \u00b7 (602) 640-0051 \u00b7 arcticazhvac@gmail.com \u2014 rows from both numbers are tagged by account' }),
         q.isLoading && jsxs('div', { className: 'space-y-3', children: [
           jsx(Skel, { h: '.9rem' }), jsx(Skel, { h: '.9rem', delay: 120 }), jsx(Skel, { h: '.9rem', delay: 240 })
@@ -2504,7 +2507,7 @@ function VoiceCard() {
                 title: 'Ask JARVIS to pull the full conversation',
                 children: [
                   jsx('span', {
-                    className: 'shrink-0 rounded px-1 py-px font-mono text-[9px] uppercase tracking-wide',
+                    className: 'shrink-0 rounded px-1 py-px font-mono text-[11px] uppercase tracking-wide',
                     style: VOICE_KIND_STYLE[v.kind] || { background: 'rgba(148,163,184,.12)', color: '#94a3b8' },
                     children: v.kind
                   }),
@@ -2512,7 +2515,7 @@ function VoiceCard() {
                     jsxs('span', { className: 'flex items-baseline gap-2', children: [
                       jsx('span', { className: 'shrink-0 text-xs font-semibold text-(--ui-text-primary)', children: v.contact }),
                       jsx('span', { className: 'truncate text-xs text-(--ui-text-secondary)', children: v.snippet }),
-                      v.date && jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.625rem] text-(--ui-text-quaternary)', children: v.date.slice(5, 16) })
+                      v.date && jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: v.date.slice(5, 16) })
                     ] }),
                     vReply === vkey && jsx(ReplyComposer, {
                       placeholder: 'reply to ' + v.contact + ' via ' + v.acct + ' \u2014 Enter sends the text',
@@ -2535,7 +2538,7 @@ function VoiceCard() {
                 ]
               }, vkey)
             }) }),
-            failing.map(a => jsx('div', { className: 'mt-2 truncate text-[0.625rem] text-(--ui-text-quaternary)', title: a.error, children: a.name + ': voice unavailable' }, 'verr-' + a.name))
+            failing.map(a => jsx('div', { className: 'mt-2 truncate text-[0.75rem] text-(--ui-text-quaternary)', title: a.error, children: a.name + ': voice unavailable' }, 'verr-' + a.name))
           ]
         })
       ]
@@ -2573,10 +2576,10 @@ function StatusCard() {
                 jsxs('div', { className: 'flex items-baseline gap-2', children: [
                   jsx('span', { className: 'text-(--ui-text-secondary)', children: s.name }),
                   s.up === false && jsx('span', { className: 'truncate text-xs text-(--ui-text-tertiary)', children: s.detail }),
-                  s.ms != null && jsx('span', { className: 'font-mono text-[0.6875rem] text-(--ui-text-quaternary)', children: s.ms + 'ms' }),
+                  s.ms != null && jsx('span', { className: 'font-mono text-[0.8125rem] text-(--ui-text-quaternary)', children: s.ms + 'ms' }),
                   (s.history || []).filter(h => h && h.ok && h.ms != null).length > 1 &&
                     jsx(Spark, { data: s.history.filter(h => h && h.ok && h.ms != null).map(h => h.ms), up: true, w: 64, h: 16 }),
-                  s.updated && jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.6875rem] text-(--ui-text-quaternary)', children: s.updated })
+                  s.updated && jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.8125rem] text-(--ui-text-quaternary)', children: s.updated })
                 ] }),
                 s.note && jsx('div', { className: 'truncate text-xs text-(--ui-text-tertiary)', title: s.note, children: s.note })
               ] })
@@ -2684,7 +2687,7 @@ function TodosCard() {
             jsx('button', {
               onClick: () => { add() },
               disabled: busy || !txt.trim(),
-              className: 'shrink-0 rounded-md border border-(--ui-stroke-secondary) px-2.5 py-1.5 font-mono text-[0.65rem] uppercase text-(--ui-text-secondary) transition-colors hover:border-(--ui-accent) hover:text-(--ui-accent) disabled:opacity-40',
+              className: 'shrink-0 rounded-md border border-(--ui-stroke-secondary) px-2.5 py-1.5 font-mono text-[0.78rem] uppercase text-(--ui-text-secondary) transition-colors hover:border-(--ui-accent) hover:text-(--ui-accent) disabled:opacity-40',
               children: busy ? '…' : 'add'
             })
           ]
@@ -2693,7 +2696,7 @@ function TodosCard() {
         plannerOk && pl.focus && jsx('div', {
           className: 'mb-2 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) px-2.5 py-2 text-sm text-(--ui-text-primary)',
           children: jsxs('span', { className: 'flex items-baseline gap-2', children: [
-            jsx('span', { className: 'shrink-0 text-[0.65rem] uppercase tracking-wider text-(--ui-accent)', children: 'focus' }),
+            jsx('span', { className: 'shrink-0 text-[0.78rem] uppercase tracking-wider text-(--ui-accent)', children: 'focus' }),
             jsx('span', { children: pl.focus })
           ] })
         }),
@@ -2717,7 +2720,7 @@ function TodosCard() {
             onMouseLeave: () => HoverBus.clear(),
             children: [
               jsx('span', {
-                className: cn('shrink-0 rounded border px-1.5 py-0.5 text-[0.65rem] uppercase tracking-wider',
+                className: cn('shrink-0 rounded border px-1.5 py-0.5 text-[0.78rem] uppercase tracking-wider',
                   t.danger ? 'border-[#f8514966] text-[#f85149]' : 'border-(--ui-stroke-secondary) text-(--ui-text-tertiary)',
                   t.done && 'opacity-50'),
                 children: t.tag
@@ -2758,7 +2761,7 @@ function TodosCard() {
             onMouseLeave: () => HoverBus.clear(),
             children: [
               jsx('span', {
-                className: 'shrink-0 rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 text-[0.65rem] uppercase tracking-wider text-(--ui-text-tertiary)',
+                className: 'shrink-0 rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 text-[0.78rem] uppercase tracking-wider text-(--ui-text-tertiary)',
                 children: t.status
               }),
               jsx('span', { className: 'min-w-0 flex-1 text-(--ui-text-secondary)', children: t.title }),
@@ -2778,7 +2781,7 @@ function TodosCard() {
                   onClick: () => complete(t),
                   title: 'Mark done (syncs to Telegram)',
                   'aria-label': 'Complete: ' + t.title,
-                  className: 'rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary) transition-colors hover:border-[#3fb950] hover:text-[#3fb950] disabled:opacity-40',
+                  className: 'rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 font-mono text-[0.75rem] uppercase text-(--ui-text-tertiary) transition-colors hover:border-[#3fb950] hover:text-[#3fb950] disabled:opacity-40',
                   children: doneId === t.id ? '\u2026' : '\u2713'
                 }),
                 jsx('button', {
@@ -2787,7 +2790,7 @@ function TodosCard() {
                   'aria-label': 'More actions: ' + t.title,
                   'aria-expanded': menuFor === t.id,
                   title: 'More actions',
-                  className: 'rounded border border-transparent px-1.5 py-0.5 font-mono text-[0.6rem] text-(--ui-text-quaternary) opacity-0 transition-opacity duration-150 hover:border-(--ui-stroke-secondary) hover:text-(--ui-accent) focus:opacity-100 group-hover:opacity-100 ' + (menuFor === t.id ? 'opacity-100 text-(--ui-accent)' : ''),
+                  className: 'rounded border border-transparent px-1.5 py-0.5 font-mono text-[0.75rem] text-(--ui-text-quaternary) opacity-0 transition-opacity duration-150 hover:border-(--ui-stroke-secondary) hover:text-(--ui-accent) focus:opacity-100 group-hover:opacity-100 ' + (menuFor === t.id ? 'opacity-100 text-(--ui-accent)' : ''),
                   children: '\u22EF'
                 }),
                 menuFor === t.id && jsx('div', { role: 'menu', className: 'ao-in absolute right-0 z-30 w-48 overflow-hidden rounded-lg border border-(--ui-stroke-secondary) bg-[rgba(10,14,20,0.96)] shadow-xl backdrop-blur-md ' + (i >= d.tasks.length - 2 ? 'bottom-full mb-1' : 'top-full mt-1'), style: { animationDuration: '180ms' },
@@ -2851,7 +2854,7 @@ function ActionRow({ a, busy, onDone, onKill }) {
     onMouseEnter: () => HoverBus.set((a.text || '').toLowerCase()),
     onMouseLeave: () => HoverBus.clear(),
     children: [
-      jsx('span', { className: 'mt-0.5 shrink-0 rounded border px-1.5 py-0.5 font-mono text-[0.65rem] font-bold ' + tier.cls, children: tier.label }),
+      jsx('span', { className: 'mt-0.5 shrink-0 rounded border px-1.5 py-0.5 font-mono text-[0.78rem] font-bold ' + tier.cls, children: tier.label }),
       jsx('div', { className: 'ao-row-text', children: [
         jsx('span', { className: 'block text-sm leading-snug text-(--ui-text-primary) ' + (a.status && a.status !== 'open' ? 'line-through opacity-50' : ''), children: a.text }),
         cmdBusy && jsx('div', { className: 'ao-mini-term', children: lastReply || 'Running\u2026' })
@@ -2869,16 +2872,16 @@ function ActionRow({ a, busy, onDone, onKill }) {
         jsx('button', {
           disabled: busy || cmdBusy,
           onClick: () => onDone(a.id),
-          className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 font-mono text-[0.65rem] uppercase text-(--ui-text-secondary) transition-colors hover:border-[#3fb950] hover:text-[#3fb950] disabled:opacity-40',
+          className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 font-mono text-[0.78rem] uppercase text-(--ui-text-secondary) transition-colors hover:border-[#3fb950] hover:text-[#3fb950] disabled:opacity-40',
           children: busy ? '\u2026' : 'done'
         }),
         jsx('button', {
           disabled: busy || cmdBusy,
           onClick: () => onKill(a.id),
-          className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 font-mono text-[0.65rem] uppercase text-(--ui-text-tertiary) transition-colors hover:border-[#f85149] hover:text-[#f85149] disabled:opacity-40',
+          className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 font-mono text-[0.78rem] uppercase text-(--ui-text-tertiary) transition-colors hover:border-[#f85149] hover:text-[#f85149] disabled:opacity-40',
           children: busy ? '\u2026' : 'kill'
         })
-      ] }) : jsx('span', { className: 'shrink-0 font-mono text-[0.65rem] uppercase text-(--ui-text-tertiary)', children: a.status })
+      ] }) : jsx('span', { className: 'shrink-0 font-mono text-[0.78rem] uppercase text-(--ui-text-tertiary)', children: a.status })
     ]
   }, a.id)
 }
@@ -2951,7 +2954,7 @@ function AdvisorCard() {
       !advQ.isLoading && !genState && actions.length === 0 && jsx('div', { className: 'text-sm text-(--ui-text-tertiary)', children: 'No advisor run yet today. Generate to get your top three.' }),
       actions.map(a => jsx(ActionRow, { a, busy: busyId === a.id, onDone: id => act(id, 'done'), onKill: id => act(id, 'kill') })),
       loopRows.length > 0 && jsxs('div', { className: 'mt-1 border-t border-(--ui-stroke-secondary) pt-2', children: [
-        jsxs('div', { className: 'mb-1.5 font-mono text-[0.65rem] uppercase tracking-wider text-(--ui-text-tertiary)', children: [
+        jsxs('div', { className: 'mb-1.5 font-mono text-[0.78rem] uppercase tracking-wider text-(--ui-text-tertiary)', children: [
           'accountability loop — ', loopRows.length, ' open'
         ] }),
         jsx('div', { className: 'flex flex-col gap-1.5', children: loopRows.map(r => jsxs('div', {
@@ -2961,7 +2964,7 @@ function AdvisorCard() {
           onMouseLeave: () => HoverBus.clear(),
           children: [
             jsx('span', {
-              className: 'shrink-0 font-mono text-[0.65rem] ' + (r.escalated ? 'text-[#d29922]' : 'text-(--ui-text-tertiary)'),
+              className: 'shrink-0 font-mono text-[0.78rem] ' + (r.escalated ? 'text-[#d29922]' : 'text-(--ui-text-tertiary)'),
               children: r.escalated ? '⚠ ' + r.age_days + 'd ignored' : r.age_days + 'd'
             }),
             jsx('span', { className: 'min-w-0 flex-1 text-xs leading-snug text-(--ui-text-secondary)', children: r.text }),
@@ -2969,13 +2972,13 @@ function AdvisorCard() {
               jsx('button', {
                 disabled: busyId === r.id,
                 onClick: () => act(r.id, 'done'),
-                className: 'rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 font-mono text-[0.6rem] uppercase text-(--ui-text-secondary) transition-colors hover:border-[#3fb950] hover:text-[#3fb950] disabled:opacity-40',
+                className: 'rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 font-mono text-[0.75rem] uppercase text-(--ui-text-secondary) transition-colors hover:border-[#3fb950] hover:text-[#3fb950] disabled:opacity-40',
                 children: 'done'
               }),
               jsx('button', {
                 disabled: busyId === r.id,
                 onClick: () => act(r.id, 'kill'),
-                className: 'rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary) transition-colors hover:border-[#f85149] hover:text-[#f85149] disabled:opacity-40',
+                className: 'rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 font-mono text-[0.75rem] uppercase text-(--ui-text-tertiary) transition-colors hover:border-[#f85149] hover:text-[#f85149] disabled:opacity-40',
                 children: 'kill'
               })
             ] })
@@ -3101,7 +3104,7 @@ function ConsoleCard({ compact = false }) {
         className: 'text-sm leading-relaxed',
         children: jsxs('span', { className: 'flex flex-col gap-0.5', children: [
           jsx('span', {
-            className: 'font-medium text-[0.65rem] uppercase tracking-wider ' +
+            className: 'font-medium text-[0.78rem] uppercase tracking-wider ' +
               (m.role === 'you' ? 'text-(--ui-text-tertiary)' : 'text-(--ui-accent)'),
             children: m.role === 'you' ? 'You' : 'JARVIS'
           }),
@@ -3130,7 +3133,7 @@ function ConsoleCard({ compact = false }) {
         volOpen && jsxs('div', {
           className: 'absolute bottom-11 left-0 z-50 w-60 rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-card) p-3 shadow-2xl',
           children: [
-            jsx('div', { className: 'mb-2 text-[0.65rem] uppercase tracking-wider text-(--ui-text-tertiary)', children: 'voice volume' }),
+            jsx('div', { className: 'mb-2 text-[0.78rem] uppercase tracking-wider text-(--ui-text-tertiary)', children: 'voice volume' }),
             jsxs('div', { className: 'flex items-center gap-2', children: [
               jsx('button', {
                 onClick: toggleTts,
@@ -3457,7 +3460,7 @@ function VisionCard() {
           }, 'en' + i))
         ] }),
         (res.suggestedActions || []).length > 0 && jsxs('div', { className: 'flex flex-col gap-1.5', children: [
-          jsx('div', { className: 'font-medium text-[0.65rem] uppercase tracking-wider text-(--ui-text-tertiary)', children: 'suggested commands' }),
+          jsx('div', { className: 'font-medium text-[0.78rem] uppercase tracking-wider text-(--ui-text-tertiary)', children: 'suggested commands' }),
           res.suggestedActions.map((a, i) => jsx('button', {
             type: 'button', className: 'ao-runbtn', onClick: () => runAction(a),
             children: [jsx('span', { className: 'text-(--ui-accent)', children: '▸' }), a]
@@ -3465,9 +3468,9 @@ function VisionCard() {
         ] }),
         res.extractedText && jsxs('details', { className: 'text-xs text-(--ui-text-tertiary)', children: [
           jsx('summary', { className: 'cursor-pointer select-none', children: 'extracted text' }),
-          jsx('pre', { className: 'mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-[0.7rem]', children: res.extractedText })
+          jsx('pre', { className: 'mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-[0.8rem]', children: res.extractedText })
         ] }),
-        res.at && jsx('div', { className: 'text-[0.65rem] text-(--ui-text-quaternary)', children: 'analyzed ' + res.at })
+        res.at && jsx('div', { className: 'text-[0.78rem] text-(--ui-text-quaternary)', children: 'analyzed ' + res.at })
       ] }),
       !busy && !res && !err && jsx('div', { className: 'text-sm text-(--ui-text-tertiary)', children: 'Capture a screen, paste or upload an image — JARVIS reads it and proposes commands.' })
     ] })
@@ -3502,7 +3505,7 @@ function QuoteRow({ q, onRemove, delay }) {
         })
       ] }),
       open && jsxs('div', { className: 'mt-1.5 flex flex-wrap items-center gap-2 border-t border-(--ui-stroke-secondary) pt-1.5', children: [
-        jsx('span', { className: 'text-[0.65rem] text-(--ui-text-quaternary)', children: series.length + ' intraday points · ' + (series.length ? 'day range ' + Math.min(...series).toFixed(2) + '–' + Math.max(...series).toFixed(2) : '') }),
+        jsx('span', { className: 'text-[0.78rem] text-(--ui-text-quaternary)', children: series.length + ' intraday points · ' + (series.length ? 'day range ' + Math.min(...series).toFixed(2) + '–' + Math.max(...series).toFixed(2) : '') }),
         jsx('button', {
           type: 'button', className: 'ao-btn',
           onClick: e => { e.stopPropagation(); Chimes.play('up'); ConsoleStore.send('analyze ' + q.symbol + ' — momentum, key levels and a buy/hold/sell read for today') },
@@ -3799,7 +3802,7 @@ function OrbitCard() {
         }),
         q.error && jsxs('div', { className: 'mt-2 text-xs text-[#f85149]', children: ['Orbit data failed: ', String((q.error && q.error.message) || q.error).slice(0, 200)] }),
         !q.error && jsx('div', { className: 'mt-2 border-t border-(--ui-stroke-secondary) pt-2', children: jsxs('div', { className: 'flex flex-wrap items-center gap-1.5', children: [
-          jsx('span', { className: 'font-mono text-[0.65rem] uppercase tracking-wider text-(--ui-text-tertiary)', children: 'connect an app:' }),
+          jsx('span', { className: 'font-mono text-[0.78rem] uppercase tracking-wider text-(--ui-text-tertiary)', children: 'connect an app:' }),
           suggested.map(it => jsx('button', {
             type: 'button',
             className: 'ao-runbtn',
@@ -4038,13 +4041,13 @@ function HeroWidget({ onOpenSpotlight, onOpenServices }) {
         }),
         // what JARVIS is actually running + live elapsed — no silent-violet voids
         curCmd && jsx('span', {
-          className: 'font-mono text-[0.6rem] text-(--ui-text-tertiary) max-w-[420px] truncate',
+          className: 'font-mono text-[0.75rem] text-(--ui-text-tertiary) max-w-[420px] truncate',
           title: curCmd,
           children: '· ' + curCmd + ' · ' + busySecs + 's'
         }),
         // brief green "done in Ns" flash when a command completes
         !curCmd && doneFlash && (Date.now() - doneFlash.at < 6000) && jsx('span', {
-          className: 'font-mono text-[0.6rem] text-[#3fb950] max-w-[420px] truncate',
+          className: 'font-mono text-[0.75rem] text-[#3fb950] max-w-[420px] truncate',
           title: doneFlash.cmd,
           children: '✓ ' + doneFlash.cmd + ' · ' + doneFlash.secs + 's'
         }),
@@ -4052,7 +4055,7 @@ function HeroWidget({ onOpenSpotlight, onOpenServices }) {
           type: 'button',
           onClick: onOpenServices,
           title: 'Service health — click for details',
-          className: 'flex items-center gap-1.5 font-mono text-[0.6rem] text-(--ui-text-quaternary) transition-colors hover:text-(--ui-accent)',
+          className: 'flex items-center gap-1.5 font-mono text-[0.75rem] text-(--ui-text-quaternary) transition-colors hover:text-(--ui-accent)',
           children: [
             'SVC ',
             jsx('span', { style: { color: down > 0 ? '#f5495b' : '#3fb950' }, children: up + '/' + svcs.length }),
@@ -4070,8 +4073,8 @@ function HeroWidget({ onOpenSpotlight, onOpenServices }) {
             )})
           ]
         }),
-        jsx('span', { className: 'font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: open + ' open' }),
-        jsx('span', { className: 'font-mono text-[0.6rem] text-(--ui-text-quaternary)', children:
+        jsx('span', { className: 'font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: open + ' open' }),
+        jsx('span', { className: 'font-mono text-[0.75rem] text-(--ui-text-quaternary)', children:
           now.toLocaleTimeString('en-US', { hour12: false })
         }),
         // faint area sparkline behind MTD revenue (falls back to a plain figure
@@ -4081,7 +4084,7 @@ function HeroWidget({ onOpenSpotlight, onOpenServices }) {
             jsx(Spark, { data: revSeries, up: true, w: 48, h: 20 }),
             jsx('span', { className: 'absolute inset-0 flex items-center justify-center font-mono text-[0.55rem] text-(--ui-text-quaternary)', children: jsx(AnimNum, { value: metrics ? metrics.revenue_mtd : 0, prefix: '$', duration: 600 }) })
           ]
-        }) : metrics && jsx('span', { className: 'font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: 'MTD ' + fmtMoney(metrics.revenue_mtd) })
+        }) : metrics && jsx('span', { className: 'font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: 'MTD ' + fmtMoney(metrics.revenue_mtd) })
       ] }),
       // right side: protocol buttons
       jsxs('div', { className: 'ao-hero-actions flex flex-wrap items-center gap-1.5 ml-auto', children: [
@@ -4183,7 +4186,7 @@ function ServiceDrawer({ svcs, open, onClose }) {
               jsx('span', { className: 'shrink-0', children: jsx(Led, { up: s.up }) }),
               jsxs('div', { className: 'min-w-0 flex-1', children: [
                 jsx('div', { className: 'text-(--ui-text-secondary) truncate', children: s.name }),
-                jsxs('div', { className: 'flex items-center gap-2 text-[0.65rem] text-(--ui-text-quaternary)', children: [
+                jsxs('div', { className: 'flex items-center gap-2 text-[0.78rem] text-(--ui-text-quaternary)', children: [
                   s.updated && jsx('span', { children: s.updated }),
                   s.ms != null && jsx('span', { children: s.ms + 'ms' }),
                   s.up === false && s.detail && jsx('span', { className: 'truncate max-w-[120px]', children: s.detail })
@@ -4191,7 +4194,7 @@ function ServiceDrawer({ svcs, open, onClose }) {
               ] }),
               jsx('button', {
                 type: 'button',
-                className: 'ao-btn text-[0.6rem]',
+                className: 'ao-btn text-[0.75rem]',
                 'data-kind': 'restart',
                 onClick: () => ConsoleStore.send('restart service ' + s.name),
                 title: 'Restart ' + s.name,
@@ -4280,9 +4283,9 @@ function AgentsCard() {
           jsxs('div', { className: row + ' ao-in', style: { animationDelay: i * 40 + 'ms' }, children: [
             jsx(RunDot, { status: r.status }),
             jsx('span', { className: 'truncate text-(--ui-text-secondary)', children: r.name }),
-            r.outcome && jsx('span', { className: 'font-mono text-[10px] text-(--ui-text-quaternary)', children: r.outcome }),
-            jsx('span', { className: 'ml-auto shrink-0 font-mono text-[10px] text-(--ui-text-quaternary)', children: fmtAgo(r.at) }),
-            r.error && jsx('span', { title: r.error, className: 'shrink-0 text-[10px] text-[#f85149]', children: '!' })
+            r.outcome && jsx('span', { className: 'font-mono text-[12px] text-(--ui-text-quaternary)', children: r.outcome }),
+            jsx('span', { className: 'ml-auto shrink-0 font-mono text-[12px] text-(--ui-text-quaternary)', children: fmtAgo(r.at) }),
+            r.error && jsx('span', { title: r.error, className: 'shrink-0 text-[12px] text-[#f85149]', children: '!' })
           ] }, i)
         ) : jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'no runs in the last 48h' }) })
       ] })
@@ -4786,9 +4789,9 @@ function AutomationCard() {
           jsxs('div', { className: 'flex items-center gap-2 text-xs', children: [
             jsx('span', { style: { color: '#f5495b' }, children: '●' }),
             jsx('span', { className: 'font-semibold truncate', children: p.service + ' is down' }),
-            jsx('span', { className: 'ml-auto shrink-0 font-mono text-[10px] text-(--ui-text-quaternary)', children: fmtAgo(p.created) })
+            jsx('span', { className: 'ml-auto shrink-0 font-mono text-[12px] text-(--ui-text-quaternary)', children: fmtAgo(p.created) })
           ] }),
-          p.detail && jsx('div', { className: 'mt-0.5 truncate font-mono text-[10px] text-(--ui-text-quaternary)', children: p.detail }),
+          p.detail && jsx('div', { className: 'mt-0.5 truncate font-mono text-[12px] text-(--ui-text-quaternary)', children: p.detail }),
           jsxs('div', { className: 'mt-1.5 flex items-center gap-1.5', children: [
             jsx('button', {
               type: 'button', className: 'ao-btn', disabled: busy !== '',
@@ -4800,7 +4803,7 @@ function AutomationCard() {
               onClick: () => act('/remediation/deny', { id: p.id }, 'deny' + p.id),
               children: 'DENY'
             }),
-            jsx('span', { className: 'ml-auto font-mono text-[10px] text-(--ui-text-quaternary)', children: p.cmd ? 'restart cmd ready' : 'agent will diagnose' })
+            jsx('span', { className: 'ml-auto font-mono text-[12px] text-(--ui-text-quaternary)', children: p.cmd ? 'restart cmd ready' : 'agent will diagnose' })
           ] })
         ]
       }, p.id)),
@@ -4815,13 +4818,13 @@ function AutomationCard() {
             jsxs('div', { className: 'flex items-center gap-2 min-w-0 text-xs', children: [
               jsx('span', { className: 'shrink-0', style: { color: (REM_KIND[ev.kind] || {}).color || '#64748b' }, children: (REM_KIND[ev.kind] || {}).icon || '•' }),
               jsx('span', { className: 'truncate text-(--ui-text-secondary)', children: ev.service }),
-              jsx('span', { className: 'truncate font-mono text-[10px] text-(--ui-text-quaternary)', children: ev.kind.replace('_', ' ') }),
-              jsx('span', { className: 'ml-auto shrink-0 font-mono text-[10px] text-(--ui-text-quaternary)', children: fmtAgo(ev.at) })
+              jsx('span', { className: 'truncate font-mono text-[12px] text-(--ui-text-quaternary)', children: ev.kind.replace('_', ' ') }),
+              jsx('span', { className: 'ml-auto shrink-0 font-mono text-[12px] text-(--ui-text-quaternary)', children: fmtAgo(ev.at) })
             ] }),
             open && jsxs(Fragment, { children: [
-              ev.detail && jsx('div', { className: 'mt-1.5 whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed text-(--ui-text-tertiary)', children: ev.detail }),
+              ev.detail && jsx('div', { className: 'mt-1.5 whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-(--ui-text-tertiary)', children: ev.detail }),
               failed && (evAct && evAct.id === ev.id ? jsx('div', {
-                className: 'mt-2 cursor-pointer font-mono text-[10px] leading-relaxed',
+                className: 'mt-2 cursor-pointer font-mono text-[12px] leading-relaxed',
                 style: { color: evAct.state === 'working' ? '#5cd6ff' : evAct.state === 'done' ? '#3fb950' : '#f5495b' },
                 onClick: e => { e.stopPropagation(); setEvAct(null) },
                 title: 'Click to dismiss \u2014 full detail in the console',
@@ -4835,12 +4838,12 @@ function AutomationCard() {
                       : '\u2715 ' + evAct.note)
               }) : jsxs('div', { className: 'mt-2 flex items-center gap-1.5', children: [
                 jsx('button', {
-                  type: 'button', className: 'ao-btn text-[10px]',
+                  type: 'button', className: 'ao-btn text-[12px]',
                   onClick: e => { e.stopPropagation(); Chimes.play('up'); runFix(ev, 'diagnose why the ' + ev.service + ' service is down \u2014 find the root cause, fix it, confirm it\u2019s healthy again, and report back what was wrong', 'diagnosing') },
                   children: '🔧 DIAGNOSE & FIX'
                 }),
                 jsx('button', {
-                  type: 'button', className: 'ao-btn text-[10px]',
+                  type: 'button', className: 'ao-btn text-[12px]',
                   onClick: e => { e.stopPropagation(); Chimes.play('up'); runFix(ev, 'restart the ' + ev.service + ' service and confirm it comes back healthy', 'restarting') },
                   children: '🔄 RESTART'
                 })
@@ -4905,7 +4908,7 @@ function MemoryCard() {
             type: 'button',
             onClick: () => drop(f.id),
             title: 'Forget this',
-            className: 'shrink-0 text-[10px] text-(--ui-text-quaternary) opacity-0 transition-opacity group-hover:opacity-100 hover:text-[#f5495b]',
+            className: 'shrink-0 text-[12px] text-(--ui-text-quaternary) opacity-0 transition-opacity group-hover:opacity-100 hover:text-[#f5495b]',
             children: '✕'
           })
         ] }, f.id)
@@ -5046,7 +5049,7 @@ function SettingsSection() {
           jsxs('div', { children: [
             jsxs('div', { className: 'mb-1 flex items-baseline justify-between', children: [
               jsx('span', { className: 'ao-label', children: 'hud transparency' }),
-              jsx('span', { className: 'font-mono text-[0.7rem] text-(--ui-text-tertiary)', children: pct(hudOp) })
+              jsx('span', { className: 'font-mono text-[0.8rem] text-(--ui-text-tertiary)', children: pct(hudOp) })
             ] }),
             jsx('input', {
               type: 'range', min: 0.25, max: 1, step: 0.05, value: hudOp,
@@ -5057,7 +5060,7 @@ function SettingsSection() {
           jsxs('div', { children: [
             jsxs('div', { className: 'mb-1 flex items-baseline justify-between', children: [
               jsx('span', { className: 'ao-label', children: 'voice volume' }),
-              jsx('span', { className: 'font-mono text-[0.7rem] text-(--ui-text-tertiary)', children: pct(ttsVol) })
+              jsx('span', { className: 'font-mono text-[0.8rem] text-(--ui-text-tertiary)', children: pct(ttsVol) })
             ] }),
             jsx('input', {
               type: 'range', min: 0, max: 1, step: 0.05, value: ttsVol,
@@ -5124,7 +5127,7 @@ function SettingsSection() {
     // ---- api keys
     jsx(AoCard, {
       label: 'api keys', delay: 100,
-      right: jsx('span', { className: 'font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: 'stored in ~/.hermes/agentos/.env' }),
+      right: jsx('span', { className: 'font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: 'stored in ~/.hermes/agentos/.env' }),
       children: jsxs('div', { className: 'space-y-2', children: [
         q.isLoading && jsx(Skel, { h: '6rem' }),
         d && Object.entries(d.keys || {}).map(([name, info]) =>
@@ -5133,7 +5136,7 @@ function SettingsSection() {
             jsx(BrandLogo, { name }),
             jsxs('div', { className: 'min-w-0 flex-1 basis-48', children: [
               jsx('div', { className: 'font-mono text-xs text-(--ui-text-primary)', children: name }),
-              jsx('div', { className: 'truncate text-[0.68rem] text-(--ui-text-tertiary)', title: info.hint, children: info.hint })
+              jsx('div', { className: 'truncate text-[0.8rem] text-(--ui-text-tertiary)', title: info.hint, children: info.hint })
             ] }),
             jsx('input', {
               type: 'password', value: keyDrafts[name] || '',
@@ -5181,9 +5184,9 @@ function SettingsSection() {
             children: keyBusy === '__custom' ? '…' : 'Add'
           })
         ] }),
-        jsx('div', { className: 'text-[0.68rem] text-(--ui-text-quaternary)', children:
+        jsx('div', { className: 'text-[0.8rem] text-(--ui-text-quaternary)', children:
           'Values are write-only — the panel shows whether a key is set, never its contents. Login passwords belong in ~/.hermes/agentos/.env, not here.' }),
-        keyMsg && jsx('div', { className: 'font-mono text-[0.68rem] text-(--ui-accent)', children: keyMsg })
+        keyMsg && jsx('div', { className: 'font-mono text-[0.8rem] text-(--ui-accent)', children: keyMsg })
       ] })
     }),
     // ---- integrations
@@ -5224,7 +5227,7 @@ function SettingsSection() {
               })
             ] }, m.name)
           ) }),
-          connMsg && jsx('div', { className: 'mt-2 font-mono text-[0.68rem] text-[#f5495b]', children: connMsg })
+          connMsg && jsx('div', { className: 'mt-2 font-mono text-[0.8rem] text-[#f5495b]', children: connMsg })
         ] })
       ] })
     })
@@ -5236,8 +5239,8 @@ const WIDGETS = {
   advisor: { title: 'Advisor',       span: 4,  rows: 5, render: () => jsx(AdvisorCard, {}) },
   todos:   { title: 'Today',         span: 6,  rows: 4, render: () => jsx(TodosCard, {}) },
   brief:   { title: 'Brief',         span: 8,  rows: 4, render: () => jsx(BriefCard, {}) },
-  status:  { title: 'Status',        span: 4,  rows: 5, render: () => jsx(StatusCard, {}) },
-  calendar:{ title: 'Calendar',     span: 4,  rows: 4, render: () => jsx(CalendarCard, {}) },
+  status:  { title: 'Status',        span: 4,  rows: 4, render: () => jsx(StatusCard, {}) }, // rows must equal brief's — unequal row-mates make the grid stair-step
+  calendar:{ title: 'Calendar',     span: 6,  rows: 4, render: () => jsx(CalendarCard, {}) },
   mail:    { title: 'Inbox',        span: 4,  rows: 4, render: () => jsx(MailCard, {}) },
   telegram:{ title: 'Telegram',     span: 4,  rows: 4, render: () => jsx(TelegramCard, {}) },
   voice:   { title: 'Google Voice', span: 4,  rows: 4, render: () => jsx(VoiceCard, {}) },
@@ -5250,10 +5253,14 @@ const WIDGETS = {
   galaxy:  { title: 'Neural core',   span: 8,  rows: 5, render: p => jsx(NeuralCore, p) },
   console: { title: 'Console',       span: 12, rows: 3, render: () => jsx(AoCard, { label: 'console', delay: 300, children: jsx(ConsoleCard, {}) }) },
   orbit:   { title: 'System orbit',  span: 12, rows: 4, render: () => jsx(OrbitCard, {}) },
-  agents:  { title: 'Agent activity', span: 6, rows: 4, render: () => jsx(AgentsCard, {}) }
+  agents:  { title: 'Agent activity', span: 12, rows: 3, render: () => jsx(AgentsCard, {}) }
 }
 
-const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'todos', 'brief', 'status', 'calendar', 'mail', 'telegram', 'voice', 'automation', 'memory', 'metrics', 'agents', 'console']
+// Row-packed so every grid row sums to exactly 12 cols — no dead space:
+// hero 12 | galaxy 8 + advisor 4 | brief 8 + status 4 | todos 6 + calendar 6 |
+// mail 4 + telegram 4 + voice 4 | automation 4 + memory 4 + metrics 4 |
+// agents 12 | console 12
+const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'brief', 'status', 'todos', 'calendar', 'mail', 'telegram', 'voice', 'automation', 'memory', 'metrics', 'agents', 'console']
 
 function defaultSizes() {
   const sizes = {}
@@ -5263,7 +5270,7 @@ function defaultSizes() {
 
 function loadLayout() {
   try {
-    const raw = JSON.parse(localStorage.getItem('agentos-grid-v2') || 'null')
+    const raw = JSON.parse(localStorage.getItem('agentos-grid-v3') || 'null')
     if (raw && Array.isArray(raw.order)) {
       const order = raw.order.filter(id => WIDGETS[id])
       for (const id of DEFAULT_ORDER) if (!order.includes(id)) order.push(id)
@@ -5275,7 +5282,7 @@ function loadLayout() {
         if (oi !== -1) order.splice(oi, 1)
         if (!hidden.includes('orbit')) hidden.push('orbit')
         raw.orbitRetired = true
-        try { localStorage.setItem('agentos-grid-v2', JSON.stringify({ ...raw, order, hidden })) } catch { /* ignore */ }
+        try { localStorage.setItem('agentos-grid-v3', JSON.stringify({ ...raw, order, hidden })) } catch { /* ignore */ }
       }
       return {
         order,
@@ -5320,7 +5327,7 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
 
   function persist(next) {
     setLayout(next)
-    try { localStorage.setItem('agentos-grid-v2', JSON.stringify(next)) } catch { /* ignore */ }
+    try { localStorage.setItem('agentos-grid-v3', JSON.stringify(next)) } catch { /* ignore */ }
   }
 
   // Drag-resize: width follows grid columns, height follows 92px row units.
@@ -5489,8 +5496,8 @@ function ModeShell({ title, hint, children }) {
     children: [
       jsxs('div', { className: 'ao-mode-bar', children: [
         jsx('span', { className: 'ao-wordmark text-sm font-semibold text-(--ui-accent) ao-hero-glow', children: '// ' + title.toUpperCase() }),
-        hint && jsx('span', { className: 'font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: hint }),
-        jsx('span', { className: 'ml-auto font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: 'esc to exit' }),
+        hint && jsx('span', { className: 'font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: hint }),
+        jsx('span', { className: 'ml-auto font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: 'esc to exit' }),
         jsx('button', { type: 'button', className: 'ao-wbtn', title: 'Exit mode', onClick: () => ModeStore.set(null), children: '✕' })
       ] }),
       jsx('div', { className: 'flex min-h-0 flex-1 flex-col', children })
@@ -5534,7 +5541,7 @@ function BriefingMode() {
         text && jsx('button', { type: 'button', className: 'ao-btn', onClick: () => Tts.speak(text), children: 'SPEAK' }),
         text && !editing && jsx('button', { type: 'button', className: 'ao-btn', onClick: startEdit, children: 'EDIT' }),
         text && jsx('button', { type: 'button', className: 'ao-btn border-[#f5495b]/50 text-[#f5495b]', onClick: stopJarvisSpeech, children: 'STOP' }),
-        jsx('span', { className: 'ml-auto font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: d && d.date ? d.date : '' })
+        jsx('span', { className: 'ml-auto font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: d && d.date ? d.date : '' })
       ] }),
       q.isLoading && jsx(Skel, { h: '12rem' }),
       editing ? jsxs(Fragment, { children: [
@@ -5587,7 +5594,7 @@ function ConsoleMode() {
             jsx('span', { className: 'text-(--ui-text-secondary)', children: m.text })
           ] }, i)) : jsx('div', { className: 'text-(--ui-text-quaternary)', children: 'No commands yet — type below or press Ctrl+J.' })
         }),
-        ConsoleStore.busy && jsx('div', { className: 'px-4 pb-1 font-mono text-[0.65rem] text-(--ui-accent)', children: '… working on: ' + (ConsoleStore.current || '') }),
+        ConsoleStore.busy && jsx('div', { className: 'px-4 pb-1 font-mono text-[0.78rem] text-(--ui-accent)', children: '… working on: ' + (ConsoleStore.current || '') }),
         jsxs('div', { className: 'flex items-center gap-2 border-t border-(--ui-stroke-secondary) p-3', children: [
           jsx('input', {
             value: text,
@@ -5606,7 +5613,7 @@ function ConsoleMode() {
           jsxs('div', { className: 'flex items-center gap-2 text-xs', children: [
             jsx('span', { className: 'inline-block h-1.5 w-1.5 shrink-0 rounded-full', style: { background: s.up === false ? '#f5495b' : s.up === true ? '#3fb950' : '#d29922' } }),
             jsx('span', { className: 'truncate text-(--ui-text-secondary)', children: s.name }),
-            s.ms != null && jsx('span', { className: 'ml-auto font-mono text-[10px] text-(--ui-text-quaternary)', children: s.ms + 'ms' })
+            s.ms != null && jsx('span', { className: 'ml-auto font-mono text-[12px] text-(--ui-text-quaternary)', children: s.ms + 'ms' })
           ] }, s.name)
         ) }),
         jsx('div', { className: 'ao-label mt-2', children: 'tasks' }),
@@ -5688,8 +5695,8 @@ function HudOverlay() {
         jsxs('div', { className: 'min-w-0 flex-1', children: [
           jsxs('div', { className: 'flex items-center gap-3', children: [
             jsx('span', { className: 'text-sm font-semibold ao-hero-glow', style: { color: ORB_STATE_COLORS[state] }, children: word }),
-            busy && jsx('span', { className: 'truncate font-mono text-[0.6rem] text-(--ui-text-tertiary)', children: '· ' + (ConsoleStore.current || '') }),
-            jsx('span', { className: 'ml-auto font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: now.toLocaleTimeString('en-US', { hour12: false }) }),
+            busy && jsx('span', { className: 'truncate font-mono text-[0.75rem] text-(--ui-text-tertiary)', children: '· ' + (ConsoleStore.current || '') }),
+            jsx('span', { className: 'ml-auto font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: now.toLocaleTimeString('en-US', { hour12: false }) }),
             jsx('button', {
               type: 'button', className: 'ao-wbtn',
               title: companion ? 'Hide HUD (Alt+Space brings it back)' : 'Exit HUD',
@@ -5700,7 +5707,7 @@ function HudOverlay() {
               children: '✕'
             })
           ] }),
-          jsxs('div', { className: 'mt-1 flex items-center gap-2 font-mono text-[0.65rem]', children: [
+          jsxs('div', { className: 'mt-1 flex items-center gap-2 font-mono text-[0.78rem]', children: [
             jsx('span', { children: 'SVC ' }),
             jsx('span', { style: { color: downSvcs.length > 0 ? '#f5495b' : '#3fb950' }, children: up + '/' + svcs.length }),
             jsx('span', { className: 'ml-2', children: open + ' open' }),
@@ -5881,7 +5888,7 @@ function AgentosPage() {
               children: 'JARVIS DECK // OPS CONTROL'
             }),
             jsx('div', {
-              className: 'mt-0.5 font-mono text-[0.6rem] uppercase tracking-[0.22em] text-(--ui-text-quaternary)',
+              className: 'mt-0.5 font-mono text-[0.75rem] uppercase tracking-[0.22em] text-(--ui-text-quaternary)',
               children: 'neural interface · personal ops deck'
             })
           ] }),
