@@ -15,6 +15,8 @@ import {
 } from '@hermes/plugin-sdk'
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useRef, useState, useMemo, Component } from 'react'
+import * as THREE from 'three'
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { LOGOS } from './logos.js'
 
 let REST = null
@@ -1769,7 +1771,11 @@ function MetricsCard() {
                 jsx('div', { className: 'ao-num', children: jsx(AnimNum, { value: d.jobs_today }) })] })
             ] }),
             jsx('div', { className: 'mt-4 space-y-2', children: byStatus.map((s, i) =>
-              jsxs('div', { className: 'ao-in', style: { animationDelay: 200 + i * 90 + 'ms' }, children: [
+              jsxs('div', {
+                className: 'ao-in cursor-pointer', style: { animationDelay: 200 + i * 90 + 'ms' },
+                onClick: () => { Chimes.play('up'); ConsoleStore.send('show me the "' + s.status + '" jobs from the hub with their prices and details') },
+                title: 'Ask JARVIS for the ' + s.status + ' jobs',
+                children: [
                 jsxs('div', { className: 'mb-1 flex items-baseline justify-between text-xs', children: [
                   jsx('span', { className: 'text-(--ui-text-tertiary)', children: s.status }),
                   jsxs('span', { className: 'font-mono text-(--ui-text-secondary)', children: [
@@ -1808,7 +1814,9 @@ function StatusCard() {
         d && jsx('div', { className: 'space-y-1', children: (d.services || []).map((s, i) =>
           jsxs('div', {
             className: 'ao-in flex items-start gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
-            style: { animationDelay: 150 + i * 80 + 'ms' },
+            style: { animationDelay: 150 + i * 80 + 'ms', cursor: 'pointer' },
+            onClick: () => { haptic('tap'); DrawerBus.open(s.name) },
+            title: 'Open ' + s.name + ' in the services drawer',
             children: [
               jsx('span', { className: 'mt-1.5 w-4', children: jsx(Led, { up: s.up }) }),
               jsxs('div', { className: 'min-w-0 flex-1', children: [
@@ -2544,6 +2552,193 @@ function MoneyConnector({ name, data, onRefresh, refreshing, delay = 0 }) {
   })
 }
 
+// ------------------------------------------------------------ positions constellation (3D)
+// Webull positions rendered as a 3D bar constellation: height = |P/L|, color =
+// win/loss. Explode slider spreads the bars and raises a live data card over
+// each one (P/L, value, qty) with one-click JARVIS analysis. Only renders when
+// the webull snapshot actually has positions.
+
+function moneyBarSprite(text, color) {
+  const label = String(text || '').slice(0, 24)
+  const c = document.createElement('canvas')
+  let ctx = c.getContext('2d')
+  ctx.font = '700 34px ui-monospace, Menlo, monospace'
+  c.width = Math.ceil(ctx.measureText(label).width) + 24
+  c.height = 52
+  ctx = c.getContext('2d')
+  ctx.font = '700 34px ui-monospace, Menlo, monospace'
+  ctx.fillStyle = color
+  ctx.textBaseline = 'middle'
+  ctx.shadowColor = color; ctx.shadowBlur = 12
+  ctx.fillText(label, 12, c.height / 2)
+  const tex = new THREE.CanvasTexture(c)
+  tex.minFilter = THREE.LinearFilter
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }))
+  sprite.scale.set(c.width / 130, c.height / 130, 1)
+  return sprite
+}
+
+function PositionsConstellation3D({ positions }) {
+  const wrapRef = useRef(null)
+  const cardRefs = useRef([])
+  const [explode, setExplode] = useState(0)
+  const explodeRef = useRef(0)
+  explodeRef.current = explode
+
+  useEffect(() => {
+    const wrap = wrapRef.current
+    if (!wrap || !positions.length) return undefined
+    const scene = new THREE.Scene()
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 80)
+    camera.position.set(0, 1.9, 4.6)
+    camera.lookAt(0, 0.7, 0)
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
+    renderer.domElement.style.cssText = 'display:block;width:100%;height:100%'
+    wrap.appendChild(renderer.domElement)
+    const controls = new OrbitControls(camera, renderer.domElement)
+    controls.enableDamping = true
+    controls.dampingFactor = 0.08
+    controls.target.set(0, 0.7, 0)
+    controls.minDistance = 1.5
+    controls.maxDistance = 10
+
+    scene.add(new THREE.HemisphereLight('#cfe8ff', '#0a0f16', 1.0))
+    const key = new THREE.DirectionalLight('#ffffff', 1.4)
+    key.position.set(3, 5, 4)
+    scene.add(key)
+    const grid = new THREE.GridHelper(10, 20, 0x1b3a4a, 0x0d1822)
+    scene.add(grid)
+
+    const maxPl = Math.max(1e-6, ...positions.map(p => Math.abs(Number(p.unrealizedProfitLoss) || 0)))
+    const n = positions.length
+    const spacing = 1.15
+    const bars = []
+    const tops = []
+    positions.forEach((p, i) => {
+      const pl = Number(p.unrealizedProfitLoss) || 0
+      const h = 0.25 + (Math.abs(pl) / maxPl) * 1.9
+      const win = pl >= 0
+      const color = new THREE.Color(win ? '#2ea043' : '#da3633')
+      const mat = new THREE.MeshStandardMaterial({
+        color, emissive: color, emissiveIntensity: 0.25, metalness: 0.35, roughness: 0.4,
+        transparent: true, opacity: 0.92
+      })
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1, 0.16), mat)
+      mesh.scale.y = h
+      const x = (i - (n - 1) / 2) * spacing
+      mesh.position.set(x, h / 2, 0)
+      scene.add(mesh)
+      // cap + label
+      const cap = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.1, 0.1, 0.03, 24),
+        new THREE.MeshStandardMaterial({ color: win ? '#3fb950' : '#f85149', emissive: win ? '#3fb950' : '#f85149', emissiveIntensity: 0.7 }))
+      cap.position.set(x, h + 0.015, 0)
+      scene.add(cap)
+      const sym = (p.ticker && (p.ticker.symbol || p.ticker)) || ('#' + (i + 1))
+      const label = moneyBarSprite(sym, win ? '#7ee787' : '#ff7b72')
+      label.position.set(x, h + 0.42, 0)
+      scene.add(label)
+      bars.push({ mesh, cap, label, baseX: x, topY: h })
+      tops.push(new THREE.Vector3())
+    })
+
+    let raf = 0, visible = true
+    const resize = () => {
+      const r = wrap.getBoundingClientRect()
+      const w = Math.max(80, Math.round(r.width)), h = Math.max(80, Math.round(r.height))
+      renderer.setSize(w, h, false)
+      camera.aspect = w / h
+      camera.updateProjectionMatrix()
+    }
+    const ro = new ResizeObserver(resize)
+    ro.observe(wrap)
+    resize()
+    const io = new IntersectionObserver(en => { visible = en[0].isIntersecting })
+    io.observe(wrap)
+
+    function frame() {
+      raf = requestAnimationFrame(frame)
+      if (!visible) return
+      const f = explodeRef.current
+      const spread = 1 + f * 0.9
+      bars.forEach((b, i) => {
+        const tx = b.baseX * spread
+        b.mesh.position.x += (tx - b.mesh.position.x) * 0.1
+        b.cap.position.x = b.mesh.position.x
+        b.label.position.x = b.mesh.position.x
+        // project bar top for the HTML card
+        tops[i].set(b.mesh.position.x, b.topY + 0.55, 0).project(camera)
+      })
+      const r = wrap.getBoundingClientRect()
+      positions.forEach((_, i) => {
+        const el = cardRefs.current[i]
+        if (!el) return
+        const show = f > 0.12
+        el.style.opacity = show ? '1' : '0'
+        el.style.pointerEvents = show ? 'auto' : 'none'
+        if (show) {
+          const vx = (tops[i].x * 0.5 + 0.5) * r.width
+          const vy = (-tops[i].y * 0.5 + 0.5) * r.height
+          el.style.left = Math.round(vx - 84) + 'px'
+          el.style.top = Math.round(vy) + 'px'
+        }
+      })
+      controls.update()
+      renderer.render(scene, camera)
+    }
+    raf = requestAnimationFrame(frame)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+      io.disconnect()
+      controls.dispose()
+      scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose() } })
+      renderer.dispose()
+      if (renderer.domElement.parentNode === wrap) wrap.removeChild(renderer.domElement)
+    }
+  }, [positions]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fmtPl = v => (Number(v) >= 0 ? '+$' : '-$') + Math.abs(Number(v)).toLocaleString('en-US', { maximumFractionDigits: 0 })
+  return jsx('div', { style: { position: 'relative', width: '100%', height: 320, minHeight: 260 }, ref: wrapRef,
+    children: [
+      jsx('div', { style: { position: 'absolute', left: 10, top: 8, right: 10, display: 'flex', alignItems: 'center', gap: 10, zIndex: 25 }, children: [
+        jsx('span', { className: 'ao-label', style: { fontSize: 10 }, children: 'explode' }),
+        jsx('input', { type: 'range', min: 0, max: 100, value: Math.round(explode * 100),
+          onChange: e => setExplode(Number(e.target.value) / 100),
+          className: 'ao-range', style: { maxWidth: 220 }, 'aria-label': 'Explode positions' }),
+        jsx('span', { style: { font: '400 10px ui-monospace, monospace', color: 'var(--ui-text-quaternary)' }, children: Math.round(explode * 100) + '%' }),
+        jsx('span', { style: { marginLeft: 'auto', font: '400 10px ui-monospace, monospace', color: 'var(--ui-text-quaternary)' }, children: 'bar height = |P/L| · drag to orbit' })
+      ] }),
+      positions.map((p, i) => {
+        const pl = Number(p.unrealizedProfitLoss) || 0
+        const cost = Math.max(1e-6, Math.abs(Number(p.marketValue) || 0) - Math.abs(pl))
+        const pct = (pl / cost) * 100
+        const sym = (p.ticker && (p.ticker.symbol || p.ticker)) || ''
+        return jsx('div', {
+          ref: el => { cardRefs.current[i] = el },
+          style: { position: 'absolute', width: 168, zIndex: 30, opacity: 0, transition: 'opacity .25s ease',
+            padding: '6px 8px', borderRadius: 8, background: 'rgba(10,14,20,0.94)',
+            border: '1px solid var(--ui-stroke-secondary)', pointerEvents: 'none', fontSize: 10 },
+          children: [
+            jsxs('div', { style: { display: 'flex', justifyContent: 'space-between', fontWeight: 600 }, children: [
+              jsx('span', { children: sym }),
+              jsx('span', { style: { color: pl >= 0 ? '#3fb950' : '#f85149' }, children: fmtPl(pl) })
+            ] }),
+            jsx('div', { style: { opacity: 0.75, margin: '2px 0' }, children:
+              (Number(p.position) || 0) + ' sh @ $' + (Number(p.lastPrice) || 0).toFixed(2) + ' · ' + fmtMoney(p.marketValue) + ' · ' + pct.toFixed(1) + '%' }),
+            jsx('button', {
+              type: 'button', className: 'ao-btn', style: { fontSize: '0.6rem' },
+              onClick: () => { Chimes.play('up'); ConsoleStore.send('analyze my position in ' + sym + ' — current thesis, momentum and a buy/hold/sell read') },
+              children: 'ask jarvis'
+            })
+          ]
+        }, p.ticker && p.ticker.symbol || i)
+      })
+    ] })
+}
+
 function MoneySection() {
   const qc = useQueryClient()
   const q = useQuery({
@@ -2551,9 +2746,17 @@ function MoneySection() {
     queryFn: () => REST('/money/summary')
   })
   const d = q.data
+  const positions = (d && d.stocks && d.stocks.state === 'ok' && Array.isArray(d.stocks.positions))
+    ? d.stocks.positions : []
   const refresh = () => { qc.invalidateQueries({ queryKey: ['agentos', 'money'] }); q.refetch() }
   return jsxs('div', { className: 'flex flex-col gap-3', children: [
     q.error && jsx('div', { className: 'text-sm text-(--ui-text-secondary)', children: q.error.message }),
+    positions.length > 0 && jsx(AoCard, {
+      label: 'positions — 3d constellation',
+      delay: 20,
+      right: jsx('span', { className: 'text-xs text-(--ui-text-quaternary)', children: positions.length + ' open' }),
+      children: jsx(PositionsConstellation3D, { positions })
+    }),
     jsx('div', { className: 'grid grid-cols-1 gap-3', children: [
       jsx(QuotesCard, {}),
       jsx(MoneyConnector, { name: 'stripe — balance & payouts', data: d && d.stripe, onRefresh: refresh, refreshing: q.isFetching, delay: 40 }),
@@ -2705,24 +2908,43 @@ function VisionCard() {
 // ------------------------------------------------------------ quotes (no-auth market tickers)
 
 function QuoteRow({ q, onRemove, delay }) {
+  const [open, setOpen] = useState(false)
   const up = (q.change_pct || 0) >= 0
   const price = q.price == null ? '—'
     : q.price >= 1000 ? q.price.toLocaleString('en-US', { maximumFractionDigits: 0 })
     : q.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const series = (q.series || []).filter(v => typeof v === 'number')
   return jsxs('div', {
-    className: 'ao-in flex items-center gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
-    style: { animationDelay: delay + 'ms' },
+    className: 'ao-in rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
+    style: { animationDelay: delay + 'ms', cursor: 'pointer' },
+    onClick: () => setOpen(o => !o),
+    title: open ? 'Click to collapse' : 'Click for detail + actions',
     children: [
-      jsx('span', { className: 'w-24 shrink-0 truncate text-(--ui-text-secondary)', children: q.symbol }),
-      jsx('span', { className: 'ao-num w-24 shrink-0 !text-base', children: price }),
-      jsx('span', { className: 'w-16 shrink-0 text-xs', style: { color: up ? '#3fb950' : '#f85149' },
-        children: q.change_pct == null ? '—' : (up ? '+' : '') + q.change_pct.toFixed(2) + '%' }),
-      jsx('div', { className: 'min-w-0 flex-1 overflow-hidden', children: jsx(Spark, { data: q.series, up, w: 120, h: 22 }) }),
-      onRemove && jsx('button', {
-        type: 'button', onClick: onRemove, title: 'remove',
-        className: 'shrink-0 px-1 text-xs text-(--ui-text-quaternary) hover:text-[#f85149]',
-        children: '×'
-      })
+      jsxs('div', { className: 'flex items-center gap-2', children: [
+        jsx('span', { className: 'w-24 shrink-0 truncate text-(--ui-text-secondary)', children: q.symbol }),
+        jsx('span', { className: 'ao-num w-24 shrink-0 !text-base', children: price }),
+        jsx('span', { className: 'w-16 shrink-0 text-xs', style: { color: up ? '#3fb950' : '#f85149' },
+          children: q.change_pct == null ? '—' : (up ? '+' : '') + q.change_pct.toFixed(2) + '%' }),
+        jsx('div', { className: 'min-w-0 flex-1 overflow-hidden', children: jsx(Spark, { data: q.series, up, w: open ? 220 : 120, h: open ? 40 : 22 }) }),
+        onRemove && jsx('button', {
+          type: 'button', onClick: e => { e.stopPropagation(); onRemove() }, title: 'remove',
+          className: 'shrink-0 px-1 text-xs text-(--ui-text-quaternary) hover:text-[#f85149]',
+          children: '×'
+        })
+      ] }),
+      open && jsxs('div', { className: 'mt-1.5 flex flex-wrap items-center gap-2 border-t border-(--ui-stroke-secondary) pt-1.5', children: [
+        jsx('span', { className: 'text-[0.65rem] text-(--ui-text-quaternary)', children: series.length + ' intraday points · ' + (series.length ? 'day range ' + Math.min(...series).toFixed(2) + '–' + Math.max(...series).toFixed(2) : '') }),
+        jsx('button', {
+          type: 'button', className: 'ao-btn',
+          onClick: e => { e.stopPropagation(); Chimes.play('up'); ConsoleStore.send('analyze ' + q.symbol + ' — momentum, key levels and a buy/hold/sell read for today') },
+          children: 'ask jarvis'
+        }),
+        jsx('button', {
+          type: 'button', className: 'ao-btn',
+          onClick: e => { e.stopPropagation(); Chimes.play('up'); ConsoleStore.send('what is the latest news and outlook for ' + q.symbol + '?') },
+          children: 'news'
+        })
+      ] })
     ]
   }, q.symbol)
 }
@@ -3783,17 +4005,313 @@ function MemoryGalaxy() {
       jsx('span', { style: { color: 'var(--ui-text-tertiary)' }, children: '\u25CF done' }),
       jsx('span', { style: { marginLeft: 'auto', opacity: 0.7 }, children: nodes.length + ' nodes \u00B7 drag \u00B7 ctrl+wheel \u00B7 click' })
     ] })
-  const detail = !sel ? null : jsx('div', { style: { position: 'absolute', right: 10, top: 8, maxWidth: '62%', fontSize: 11, padding: '7px 10px', borderRadius: 8, background: 'rgba(10,14,20,0.92)', border: '1px solid var(--ui-stroke-secondary)', pointerEvents: 'none' },
-    children: [
-      jsx('div', { style: { fontWeight: 600, marginBottom: 2 }, children: sel.label }),
-      jsx('div', { style: { opacity: 0.75 }, children: [sel.source, sel.status, sel.assignee, sel.detail, sel.ts ? fmtTs(sel.ts) : ''].filter(Boolean).join(' \u00B7 ') })
-    ] })
+  // selected node -> live action panel (same actions as the 3D renderer)
+  const detail = !sel ? null : jsx(GalaxyNodeActions, { node: sel, onClose: () => setSel(null) })
+  const detailMeta = !sel ? null : jsx('div', { style: { position: 'absolute', right: 10, top: 92, maxWidth: '62%', fontSize: 10, opacity: 0.75, pointerEvents: 'none' },
+    children: 'last activity: ' + (fmtTs(sel.ts) || 'unknown') })
   return jsx('div', { style: { position: 'relative', width: '100%', height: '100%', minHeight: 260 }, ref: wrapRef,
     children: [
       jsx('canvas', { ref: cvRef, 'aria-label': 'memory galaxy', style: { display: 'block', touchAction: 'none' } }),
       legend,
-      detail
+      detail,
+      detailMeta
     ] })
+}
+
+// ------------------------------------------------------------ galaxy node actions
+// One action panel shared by the 2D and 3D galaxy: click a node anywhere and
+// get real actions for it (delegate to JARVIS, restart a service, run a cron).
+// Everything routes through ConsoleStore.send — the proven command path — so
+// no new backend surface is needed.
+
+function galaxyActionsFor(node) {
+  const label = node.label || node.id
+  if (node.source === 'service') {
+    return [
+      { label: 'restart', title: 'Delegate the restart to JARVIS', cmd: 'restart service ' + label },
+      { label: 'diagnose', title: 'Ask JARVIS why it is down', cmd: 'diagnose why the ' + label + ' service is down and report what you find' }
+    ]
+  }
+  if (node.source === 'cron') {
+    return [
+      { label: 'run now', title: 'Run this cron job right now', cmd: 'run the cron job "' + label + '" right now and report the outcome' },
+      { label: 'details', title: 'Show last runs + schedule', cmd: 'show me the schedule and last 3 runs of the cron job "' + label + '"' }
+    ]
+  }
+  // tasks (kanban / telegram)
+  const acts = [
+    { label: 'done', title: 'Mark this task done via JARVIS', cmd: 'mark the task "' + label + '" as done on my board' },
+    { label: 'break down', title: 'Ask JARVIS to break it into steps', cmd: 'break this task into concrete ordered steps and add them to my list: ' + label },
+    { label: 'delegate', title: 'Hand the whole thing to JARVIS', cmd: label }
+  ]
+  return acts
+}
+
+function GalaxyNodeActions({ node, onClose }) {
+  if (!node) return null
+  const acts = galaxyActionsFor(node)
+  return jsx('div', {
+    style: { position: 'absolute', right: 10, top: 8, maxWidth: '68%', zIndex: 30,
+      padding: '8px 10px', borderRadius: 8, background: 'rgba(10,14,20,0.94)',
+      border: '1px solid var(--ui-stroke-secondary)', pointerEvents: 'auto' },
+    children: [
+      jsxs('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8 }, children: [
+        jsx('div', { style: { fontWeight: 600, fontSize: 11, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, children: node.label || node.id }),
+        jsx('button', { type: 'button', onClick: onClose, title: 'Close', 'aria-label': 'Close node actions',
+          style: { marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--ui-text-quaternary)', cursor: 'pointer', fontSize: 11 },
+          children: '\u00D7' })
+      ] }),
+      jsx('div', { style: { opacity: 0.7, fontSize: 10, margin: '2px 0 6px' },
+        children: [node.source, node.status, node.assignee, node.detail].filter(Boolean).join(' \u00B7 ') }),
+      jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5 }, children: [
+        acts.map((a, i) => jsx('button', {
+          type: 'button',
+          className: 'ao-btn',
+          title: a.title,
+          onClick: () => { haptic('tap'); Chimes.play('up'); onClose(); ConsoleStore.send(a.cmd) },
+          children: a.label
+        }, i)),
+        jsx('span', { style: { marginLeft: 'auto', alignSelf: 'center', font: '400 9px ui-monospace, monospace', color: 'var(--ui-text-quaternary)' }, children: 'via JARVIS' })
+      ] })
+    ]
+  })
+}
+
+// ------------------------------------------------------------ memory galaxy 3D
+// three.js renderer for the same buildGalaxy model the 2D canvas uses: real
+// depth, per-node point sprites, cluster explode (slider spreads every cluster
+// outward from its anchor) and the same click -> GalaxyNodeActions flow.
+// Selected from Settings > appearance ("memory galaxy renderer").
+
+const Galaxy3DVert = `precision highp float;
+attribute float aSize;
+attribute vec3 aColor;
+uniform float uTime;
+uniform float uPixelRatio;
+varying vec3 vColor;
+varying float vTwinkle;
+void main() {
+  vColor = aColor;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  float tw = 0.75 + 0.25 * sin(uTime * 1.7 + position.x * 4.1 + position.y * 3.3);
+  vTwinkle = tw;
+  gl_PointSize = aSize * uPixelRatio * (2.6 / max(-mv.z, 0.6)) * (0.85 + 0.3 * tw);
+  gl_Position = projectionMatrix * mv;
+}`
+const Galaxy3DFrag = `precision highp float;
+varying vec3 vColor;
+varying float vTwinkle;
+void main() {
+  vec2 c = gl_PointCoord - 0.5;
+  float d = length(c);
+  if (d > 0.5) discard;
+  float core = smoothstep(0.5, 0.06, d);
+  float glow = smoothstep(0.5, 0.0, d) * 0.35;
+  float a = core + glow;
+  vec3 col = mix(vColor, vec3(1.0), core * 0.55 * vTwinkle);
+  gl_FragColor = vec4(col * a, a);
+}`
+
+function MemoryGalaxy3D() {
+  const q = useQuery({ queryKey: ['agentos', 'memory'], queryFn: () => REST('/memory'), refetchInterval: 120000 })
+  const nodes = (q.data && q.data.nodes) || []
+  const nowSec = Math.floor(Date.now() / 1000)
+  const model = useMemo(() => buildGalaxy(nodes, nowSec), [nodes]) // eslint-disable-line
+  const wrapRef = useRef(null)
+  const [sel, setSel] = useState(null)
+  const [explode, setExplode] = useState(0)
+  const [reduced] = useState(() => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches)
+  const selRef = useRef(null)
+  selRef.current = sel
+  const explodeRef = useRef(0)
+  explodeRef.current = explode
+
+  useEffect(() => {
+    const wrap = wrapRef.current
+    if (!wrap || !model.length) return undefined
+    const scene = new THREE.Scene()
+    const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 120)
+    camera.position.set(0, 0.9, 4.6)
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
+    renderer.domElement.style.cssText = 'display:block;touch-action:none;cursor:grab'
+    wrap.appendChild(renderer.domElement)
+    const controls = new OrbitControls(camera, renderer.domElement)
+    controls.enableDamping = true
+    controls.dampingFactor = 0.06
+    controls.enablePan = false
+    controls.rotateSpeed = 0.55
+    controls.minDistance = 1.6
+    controls.maxDistance = 12
+    if (reduced) controls.autoRotate = false
+    else { controls.autoRotate = true; controls.autoRotateSpeed = 0.35 }
+
+    // node point cloud (buildGalaxy coords are ~unit sphere; scale up x7)
+    const S = 7
+    const N = model.length
+    const pos = new Float32Array(N * 3)
+    const col = new Float32Array(N * 3)
+    const siz = new Float32Array(N)
+    const accent = cssColorToRgb(getComputedStyle(wrap).getPropertyValue('--ui-accent').trim()) || [0.36, 0.84, 1]
+    model.forEach((m, i) => {
+      pos[i * 3] = m.pos[0] * S; pos[i * 3 + 1] = m.pos[1] * S; pos[i * 3 + 2] = m.pos[2] * S
+      const rgb = m.n.color_key === 'task_open' ? accent : (GALAXY_RGB[m.n.color_key] || [160, 170, 185])
+      col[i * 3] = rgb[0] / 255; col[i * 3 + 1] = rgb[1] / 255; col[i * 3 + 2] = rgb[2] / 255
+      siz[i] = 4 + m.size * 2.2
+    })
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+    geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3))
+    geo.setAttribute('aSize', new THREE.BufferAttribute(siz, 1))
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: Galaxy3DVert,
+      fragmentShader: Galaxy3DFrag,
+      uniforms: { uTime: { value: 0 }, uPixelRatio: { value: Math.min(window.devicePixelRatio || 1, 1.5) } },
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    })
+    const points = new THREE.Points(geo, mat)
+    scene.add(points)
+
+    // per-node explode direction: away from the cluster anchor (unit sphere dir)
+    const dirs = model.map(m => {
+      const a = m.anchor
+      const len = Math.max(0.12, Math.hypot(a[0], a[1], a[2]))
+      return new THREE.Vector3(a[0] / len, a[1] / len * 0.6, a[2] / len)
+    })
+    const basePos = geo.attributes.position.array.slice()
+
+    // orb-state reactive accent light + faint reference sphere wireframe
+    const wire = new THREE.Mesh(
+      new THREE.SphereGeometry(3.4, 24, 16),
+      new THREE.MeshBasicMaterial({ color: 0x5cd6ff, wireframe: true, transparent: true, opacity: 0.045 }))
+    scene.add(wire)
+
+    let raf = 0, visible = true
+    const resize = () => {
+      const r = wrap.getBoundingClientRect()
+      const w = Math.max(80, Math.round(r.width)), h = Math.max(80, Math.round(r.height))
+      renderer.setSize(w, h, false)
+      camera.aspect = w / h
+      camera.updateProjectionMatrix()
+    }
+    const ro = new ResizeObserver(resize)
+    ro.observe(wrap)
+    resize()
+    const io = new IntersectionObserver(en => { visible = en[0].isIntersecting })
+    io.observe(wrap)
+
+    const ray = new THREE.Raycaster()
+    ray.params.Points = { threshold: 0.35 }
+    let downXY = null
+    const onDown = e => { downXY = [e.clientX, e.clientY] }
+    const onUp = e => {
+      if (!downXY) return
+      const dx = e.clientX - downXY[0], dy = e.clientY - downXY[1]
+      downXY = null
+      if (dx * dx + dy * dy > 36) return // orbit drag, not a pick
+      const r = renderer.domElement.getBoundingClientRect()
+      const nx = ((e.clientX - r.left) / r.width) * 2 - 1
+      const ny = -((e.clientY - r.top) / r.height) * 2 + 1
+      ray.setFromCamera(new THREE.Vector2(nx, ny), camera)
+      const hit = ray.intersectObject(points)
+      setSel(hit.length ? model[hit[0].index].n : null)
+    }
+    renderer.domElement.addEventListener('pointerdown', onDown)
+    renderer.domElement.addEventListener('pointerup', onUp)
+
+    const tmp = new THREE.Vector3()
+    function frame(now) {
+      raf = requestAnimationFrame(frame)
+      if (!visible) return
+      mat.uniforms.uTime.value = now / 1000
+      // explode: lerp each node outward from its cluster anchor
+      const f = explodeRef.current
+      const arr = geo.attributes.position.array
+      for (let i = 0; i < N; i++) {
+        tmp.set(basePos[i * 3] + dirs[i].x * f * 5.2, basePos[i * 3 + 1] + dirs[i].y * f * 3.4, basePos[i * 3 + 2] + dirs[i].z * f * 5.2)
+        arr[i * 3] += (tmp.x - arr[i * 3]) * 0.09
+        arr[i * 3 + 1] += (tmp.y - arr[i * 3 + 1]) * 0.09
+        arr[i * 3 + 2] += (tmp.z - arr[i * 3 + 2]) * 0.09
+      }
+      geo.attributes.position.needsUpdate = true
+      // node pulse when JARVIS is active
+      const st = OrbBus.state
+      wire.material.opacity = st === 'thinking' || st === 'working' ? 0.07 + 0.04 * Math.sin(now / 300) : 0.045
+      controls.update()
+      renderer.render(scene, camera)
+    }
+    raf = requestAnimationFrame(frame)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+      io.disconnect()
+      renderer.domElement.removeEventListener('pointerdown', onDown)
+      renderer.domElement.removeEventListener('pointerup', onUp)
+      controls.dispose()
+      geo.dispose()
+      mat.dispose()
+      renderer.dispose()
+      if (renderer.domElement.parentNode === wrap) wrap.removeChild(renderer.domElement)
+    }
+  }, [model]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fmtTs = (ts) => {
+    if (!ts) return ''
+    const d = new Date(ts * 1000)
+    const ago = (Date.now() - d.getTime()) / 60000
+    if (ago < 1) return 'now'; if (ago < 60) return `${Math.round(ago)}m ago`
+    if (ago < 1440) return `${Math.round(ago / 60)}h ago`
+    return `${Math.round(ago / 1440)}d ago`
+  }
+  const legend = jsx('div', { style: { position: 'absolute', left: 10, bottom: 8, display: 'flex', gap: 12, fontSize: 10, opacity: 0.75, pointerEvents: 'none' },
+    children: [
+      jsx('span', { children: '\u25CF tasks' }),
+      jsx('span', { style: { color: '#7ee787' }, children: '\u25CF cron/services' }),
+      jsx('span', { style: { color: '#f85149' }, children: '\u25CF failing' }),
+      jsx('span', { style: { color: 'var(--ui-text-tertiary)' }, children: '\u25CF done' }),
+      jsx('span', { style: { marginLeft: 'auto', opacity: 0.7 }, children: nodes.length + ' nodes \u00B7 drag \u00B7 wheel zoom \u00B7 click node' })
+    ] })
+  return jsx('div', { style: { position: 'relative', width: '100%', height: '100%', minHeight: 260 }, ref: wrapRef,
+    children: [
+      jsx('div', { style: { position: 'absolute', left: 10, top: 8, right: 10, display: 'flex', alignItems: 'center', gap: 10, zIndex: 25 }, children: [
+        jsx('span', { className: 'ao-label', style: { fontSize: 10 }, children: 'explode' }),
+        jsx('input', { type: 'range', min: 0, max: 100, value: Math.round(explode * 100),
+          onChange: e => setExplode(Number(e.target.value) / 100),
+          className: 'ao-range', style: { maxWidth: 220 }, 'aria-label': 'Explode clusters' }),
+        jsx('span', { style: { font: '400 10px ui-monospace, monospace', color: 'var(--ui-text-quaternary)' }, children: Math.round(explode * 100) + '%' })
+      ] }),
+      jsx('div', { style: { position: 'absolute', inset: 0 }, 'aria-label': 'memory galaxy 3d', children: null }),
+      legend,
+      jsx(GalaxyNodeActions, { node: sel, onClose: () => setSel(null) }),
+      sel && jsx('div', { style: { position: 'absolute', right: 10, top: 92, maxWidth: '62%', fontSize: 10, opacity: 0.75, pointerEvents: 'none' },
+        children: 'last activity: ' + (fmtTs(sel.ts) || 'unknown') })
+    ] })
+}
+
+// Picks the galaxy renderer (Settings > appearance & sound). The Settings
+// setter dispatches 'agentos-galaxy3d-change' so an open dashboard swaps live.
+function GalaxyStage() {
+  const [mode] = useLocal('agentos-galaxy3d', true)
+  const [, force] = useState(0)
+  useEffect(() => {
+    const h = () => force(v => v + 1)
+    window.addEventListener('agentos-galaxy3d-change', h)
+    return () => window.removeEventListener('agentos-galaxy3d-change', h)
+  }, [])
+  if (mode === false) return jsx(MemoryGalaxy, {})
+  return jsx(MemoryGalaxy3D, {})
+}
+
+// ServiceDrawer opener bus: card rows (StatusCard, galaxy nodes) can pop the
+// existing services drawer without prop-drilling through the widget grid.
+const DrawerBus = {
+  _subs: new Set(),
+  open(name) { this.last = name || null; for (const f of this._subs) { try { f(this.last) } catch { /* ignore */ } } },
+  subscribe(fn) { this._subs.add(fn); return () => this._subs.delete(fn) },
+  last: null
 }
 
 // ------------------------------------------------------------ neural core (merged orb + galaxy center stage)
@@ -3805,7 +4323,7 @@ function NeuralCore({ onOpenSpotlight }) {
   return jsxs('div', {
     style: { position: 'relative', width: '100%', height: '100%', minHeight: 380 },
     children: [
-      jsx(MemoryGalaxy, {}),
+      jsx(GalaxyStage, {}),
       // Orb overlaid dead-center with circular fade vignette
       jsx('div', {
         style: {
@@ -4112,6 +4630,11 @@ function SettingsSection() {
   const hosted = (cq.data && cq.data.hosted) || []
   const mcps = (cq.data && cq.data.mcps) || []
   const pct = v => Math.round(v * 100) + '%'
+  const [galaxy3d, setGalaxy3d] = useLocal('agentos-galaxy3d', true)
+  const changeGalaxy = v => {
+    setGalaxy3d(v === '3d')
+    try { window.dispatchEvent(new Event('agentos-galaxy3d-change')) } catch { /* ignore */ }
+  }
 
   return jsxs('div', { className: 'mx-auto flex w-full max-w-4xl flex-col gap-3', children: [
     // ---- appearance
@@ -4119,6 +4642,18 @@ function SettingsSection() {
       label: 'appearance & sound', delay: 40,
       children: jsxs('div', { className: 'grid gap-4 sm:grid-cols-2', children: [
         jsxs('div', { className: 'space-y-3', children: [
+          jsxs('div', { children: [
+            jsx('div', { className: 'ao-label mb-1', children: 'memory galaxy renderer' }),
+            jsx('select', {
+              className: 'ao-select', value: galaxy3d ? '3d' : '2d',
+              onChange: e => changeGalaxy(e.target.value),
+              'aria-label': 'Memory galaxy renderer',
+              children: [
+                jsx('option', { value: '3d', children: '3d depth (three.js \u00B7 explode \u00B7 click-to-act)' }),
+                jsx('option', { value: '2d', children: '2d canvas (light)' })
+              ]
+            })
+          ] }),
           jsxs('div', { children: [
             jsxs('div', { className: 'mb-1 flex items-baseline justify-between', children: [
               jsx('span', { className: 'ao-label', children: 'hud transparency' }),
@@ -4791,6 +5326,8 @@ function AgentosPage() {
     window.addEventListener('mousedown', stop, { capture: true })
     return () => window.removeEventListener('mousedown', stop, { capture: true })
   }, [])
+  // Card rows (services, galaxy nodes) request the services drawer via DrawerBus.
+  useEffect(() => DrawerBus.subscribe(() => setSvcOpen(true)), []) // eslint-disable-line react-hooks/exhaustive-deps
   const [, force] = useState(0)
   useEffect(() => ConsoleStore.subscribe(() => force(v => v + 1)), [])
   const svcQ = useQuery({
