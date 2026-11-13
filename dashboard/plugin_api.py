@@ -1590,8 +1590,27 @@ def vision_analyze(body: dict = Body(...)):
 
 WORKSHOP_FILE = CACHE / "workshop-scene.json"
 WORKSHOP_SHAPES = ("box", "sphere", "cylinder", "cone", "torus", "octahedron", "capsule")
-WORKSHOP_MAX_PARTS = 48
+_WORKSHOP_MAX_PARTS = 48  # internal alias; WORKSHOP_MAX_PARTS below is the public name
+WORKSHOP_MAX_PARTS = _WORKSHOP_MAX_PARTS
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+# LLMs love color names; map the common ones so "make it gold" actually applies.
+_COLOR_NAMES = {
+    "gold": "#d4af37", "silver": "#c0c0c0", "copper": "#b87333", "bronze": "#cd7f32",
+    "red": "#e5484d", "crimson": "#dc143c", "orange": "#f5811e", "amber": "#ffb454",
+    "yellow": "#f5d90a", "green": "#30a46c", "emerald": "#10b981", "teal": "#12a594",
+    "cyan": "#5cd6ff", "blue": "#3b82f6", "navy": "#1e3a8a", "purple": "#8b5cf6",
+    "violet": "#a855f7", "pink": "#ec4899", "magenta": "#d6409f", "white": "#f0f6fc",
+    "black": "#141a24", "gray": "#8b93a7", "grey": "#8b93a7", "steel": "#8b93a7",
+    "aluminum": "#aab2c5", "chrome": "#dfe7f2", "carbon": "#1c2431", "brass": "#b5985a",
+}
+
+
+def _workshop_color(v, default):
+    v = str(v or "").strip().lower()
+    if _HEX_COLOR.match(v):
+        return v
+    return _COLOR_NAMES.get(v, default)
 
 _SHAPE_DEFAULTS = {
     "box": {"w": 1.0, "h": 1.0, "d": 1.0},
@@ -1632,8 +1651,7 @@ def _sanitize_part(p, idx):
     mat_raw = p.get("material") if isinstance(p.get("material"), dict) else {}
 
     def color(key, default):
-        v = str(mat_raw.get(key) or default)
-        return v if _HEX_COLOR.match(v) else default
+        return _workshop_color(mat_raw.get(key), default)
 
     pos = _vec3(p.get("pos"))
     mat = {
@@ -1819,6 +1837,25 @@ _WORKSHOP_BUILD_SCHEMA = {
     "required": ["name", "speech", "parts"],
 }
 
+_WORKSHOP_PATCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "label": {"type": "string"},
+        "desc": {"type": "string"},
+        "shape": {"type": "string", "enum": list(WORKSHOP_SHAPES)},
+        "params": {"type": "object", "properties": {
+            k: {"type": "number"} for k in ("w", "h", "d", "r", "tube")}},
+        "pos": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+        "rot": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+        "explodeDir": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+        "material": {"type": "object", "properties": {
+            "color": {"type": "string"}, "emissive": {"type": "string"},
+            "emissiveIntensity": {"type": "number"}, "metalness": {"type": "number"},
+            "roughness": {"type": "number"}, "opacity": {"type": "number"}},
+        },
+    },
+}
+
 _WORKSHOP_EDIT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -1829,7 +1866,7 @@ _WORKSHOP_EDIT_SCHEMA = {
                 "kind": {"type": "string", "enum": ["add_part", "remove_part", "update_part"]},
                 "id": {"type": "string"},
                 "part": _WORKSHOP_PART_SCHEMA,
-                "patch": {"type": "object"},
+                "patch": _WORKSHOP_PATCH_SCHEMA,
             },
             "required": ["kind"],
         }},
@@ -1889,9 +1926,8 @@ def _apply_ops(scene: dict, ops) -> tuple[dict, list]:
                 mat = dict(target["material"])
                 raw = patch["material"]
                 for key in ("color", "emissive"):
-                    v = str(raw.get(key) or "")
-                    if _HEX_COLOR.match(v):
-                        mat[key] = v
+                    if key in raw:
+                        mat[key] = _workshop_color(raw[key], mat[key])
                 for key in ("emissiveIntensity", "metalness", "roughness"):
                     if key in raw:
                         hi = 10.0 if key == "emissiveIntensity" else 1.0
