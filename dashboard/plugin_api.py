@@ -1942,12 +1942,22 @@ def workshop_edit(body: dict = Body(...)):
             "\n\nOperator request: " + prompt + "\nReturn the JSON ops now.")
     data = _workshop_gemini(full, _WORKSHOP_EDIT_SCHEMA)
     scene, applied = _apply_ops(current, data.get("ops"))
-    if not applied:
-        raise HTTPException(status_code=422,
-                            detail=_cap_speech(data.get("speech")) or "no applicable changes")
-    _save_workshop_scene(scene)
+    if applied:
+        _save_workshop_scene(scene)
+    # No applicable ops is a valid ANSWER (e.g. "what is the heat sink?") — the
+    # speech line carries the reply; the scene comes back untouched.
     return {"ok": True, "scene": scene, "ops": applied,
             "speech": _cap_speech(data.get("speech")), "date": _local_date()}
+
+
+@router.delete("/workshop/scene")
+def workshop_scene_reset():
+    """Clear the saved scene — the tab falls back to the built-in demo build."""
+    try:
+        WORKSHOP_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------- quotes (no-auth market data)
