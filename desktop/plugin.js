@@ -15,6 +15,8 @@ import {
 } from '@hermes/plugin-sdk'
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useRef, useState, useMemo, Component } from 'react'
+import * as THREE from 'three'
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { LOGOS } from './logos.js'
 
 let REST = null
@@ -2702,6 +2704,482 @@ function VisionCard() {
   })
 }
 
+// ------------------------------------------------------------ workshop (3D build space)
+// JARVIS builds 3D objects from structured scene JSON (backend /workshop/*).
+// The renderer is fully deterministic: shapes, explode, labels and picking are
+// all driven by the scene schema (docs/superpowers/plans/2026-11-12-workshop-spec.md) —
+// the LLM never draws anything itself.
+
+const WS_Store = {
+  scene: null,
+  explosion: 0,   // 0..1 — read every frame by the renderer, not via subscribe
+  selected: null, // part id
+  labels: false,
+  busy: false,
+  _subs: [],
+  subscribe(fn) { this._subs.push(fn); return () => { this._subs = this._subs.filter(f => f !== fn) } },
+  _emit() { for (const f of this._subs) { try { f() } catch { /* a listener bug never kills the loop */ } } },
+  setScene(s) { this.scene = s; this.selected = null; this._emit() },
+  setSelected(id) { this.selected = id; this._emit() },
+  setLabels(b) { this.labels = !!b; this._emit() },
+  setBusy(b) { this.busy = !!b; this._emit() }
+}
+
+function wsGeometry(part) {
+  const p = part.params || {}
+  switch (part.shape) {
+    case 'sphere': return new THREE.SphereGeometry(p.r || 0.5, 32, 24)
+    case 'cylinder': return new THREE.CylinderGeometry(p.r || 0.4, p.r || 0.4, p.h || 1, 32)
+    case 'cone': return new THREE.ConeGeometry(p.r || 0.4, p.h || 1, 32)
+    case 'torus': return new THREE.TorusGeometry(p.r || 0.5, p.tube || 0.15, 20, 48)
+    case 'octahedron': return new THREE.OctahedronGeometry(p.r || 0.5, 0)
+    case 'capsule': return new THREE.CapsuleGeometry(p.r || 0.3, p.h || 0.8, 6, 24)
+    default: return new THREE.BoxGeometry(p.w || 1, p.h || 1, p.d || 1)
+  }
+}
+
+function wsMaterial(m) {
+  m = m || {}
+  return new THREE.MeshStandardMaterial({
+    color: m.color || '#5cd6ff',
+    emissive: m.emissive || '#000000',
+    emissiveIntensity: m.emissiveIntensity || 0,
+    metalness: m.metalness != null ? m.metalness : 0.2,
+    roughness: m.roughness != null ? m.roughness : 0.5,
+    transparent: m.opacity != null && m.opacity < 1,
+    opacity: m.opacity != null ? m.opacity : 1
+  })
+}
+
+function wsLabelSprite(text, offY) {
+  const label = String(text || '').slice(0, 40)
+  const c = document.createElement('canvas')
+  let ctx = c.getContext('2d')
+  ctx.font = '600 30px ui-monospace, Menlo, monospace'
+  c.width = Math.ceil(ctx.measureText(label).width) + 28
+  c.height = 52
+  ctx = c.getContext('2d') // width change resets state — re-acquire + re-set
+  ctx.font = '600 30px ui-monospace, Menlo, monospace'
+  ctx.fillStyle = 'rgba(6,10,16,0.82)'
+  ctx.strokeStyle = 'rgba(92,214,255,0.55)'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  if (ctx.roundRect) ctx.roundRect(1, 1, c.width - 2, c.height - 2, 12)
+  else ctx.rect(1, 1, c.width - 2, c.height - 2)
+  ctx.fill()
+  ctx.stroke()
+  ctx.fillStyle = '#dfe7f2'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(label, 14, c.height / 2)
+  const tex = new THREE.CanvasTexture(c)
+  tex.minFilter = THREE.LinearFilter
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }))
+  sprite.scale.set(c.width / 110, c.height / 110, 1)
+  sprite.userData.offY = offY
+  return sprite
+}
+
+function wsDisposeGroup(group) {
+  group.traverse(o => {
+    if (o.geometry) o.geometry.dispose()
+    if (o.material) {
+      if (o.material.map) o.material.map.dispose()
+      o.material.dispose()
+    }
+  })
+}
+
+function wsLabelOffsetY(part) {
+  const p = part.params || {}
+  if (part.shape === 'box') return (p.h || 1) / 2 + 0.35
+  if (part.shape === 'sphere' || part.shape === 'octahedron') return (p.r || 0.5) + 0.35
+  if (part.shape === 'cylinder' || part.shape === 'cone' || part.shape === 'capsule') return (p.h || 1) / 2 + 0.35
+  if (part.shape === 'torus') return (p.r || 0.5) + (p.tube || 0.15) + 0.3
+  return 0.4
+}
+
+function Workshop3D({ className }) {
+  const hostRef = useRef(null)
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return undefined
+    const scene = new THREE.Scene()
+    scene.background = new THREE.Color('#060a10')
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 200)
+    camera.position.set(3.4, 2.4, 4.4)
+    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
+    renderer.domElement.style.cssText = 'width:100%;height:100%;display:block'
+    host.appendChild(renderer.domElement)
+    const controls = new OrbitControls(camera, renderer.domElement)
+    controls.enableDamping = true
+    controls.dampingFactor = 0.08
+    controls.target.set(0, 0.9, 0)
+    controls.maxPolarAngle = Math.PI * 0.55
+    controls.minDistance = 1.2
+    controls.maxDistance = 14
+
+    scene.add(new THREE.HemisphereLight('#cfe8ff', '#0a0f16', 0.9))
+    const key = new THREE.DirectionalLight('#ffffff', 1.6)
+    key.position.set(4, 6, 3)
+    scene.add(key)
+    const rim = new THREE.PointLight('#5cd6ff', 12, 18)
+    rim.position.set(-3, 2.5, -3)
+    scene.add(rim)
+    const grid = new THREE.GridHelper(12, 24, 0x1b3a4a, 0x0d1822)
+    grid.position.y = -0.01
+    scene.add(grid)
+
+    let group = null
+    let labels = []
+    let raf = 0
+    let visible = true
+
+    function rebuild(wsScene) {
+      if (group) { wsDisposeGroup(group); scene.remove(group) }
+      labels = []
+      group = new THREE.Group()
+      let glowBudget = 6
+      if (wsScene && Array.isArray(wsScene.parts)) {
+        wsScene.parts.forEach((part, i) => {
+          const mesh = new THREE.Mesh(wsGeometry(part), wsMaterial(part.material))
+          mesh.position.fromArray(part.pos || [0, 0, 0])
+          if (Array.isArray(part.rot)) mesh.rotation.set(part.rot[0] || 0, part.rot[1] || 0, part.rot[2] || 0)
+          mesh.userData.part = part
+          mesh.userData.base = mesh.position.clone()
+          mesh.userData.dir = new THREE.Vector3().fromArray(part.explodeDir || [0, 1, 0]).normalize()
+          mesh.userData.baseEmissive = (part.material && part.material.emissive) || '#000000'
+          mesh.userData.baseEI = (part.material && part.material.emissiveIntensity) || 0
+          mesh.userData.appear = i * 0.12
+          mesh.userData.bornAt = performance.now()
+          mesh.scale.setScalar(0.001)
+          mesh.visible = false
+          if (glowBudget > 0 && mesh.userData.baseEI >= 1) {
+            glowBudget--
+            const glow = new THREE.PointLight(mesh.userData.baseEmissive, 2.5, 3)
+            group.add(glow)
+            mesh.userData.glow = glow
+          }
+          group.add(mesh)
+          if (part.label) {
+            const sp = wsLabelSprite(part.label, wsLabelOffsetY(part))
+            sp.userData.follow = mesh
+            sp.visible = false
+            labels.push(sp)
+            group.add(sp)
+          }
+        })
+      }
+      scene.add(group)
+    }
+    WS_Store._rebuild = rebuild
+    if (WS_Store.scene) rebuild(WS_Store.scene)
+
+    // picking: click (not drag) selects the part under the cursor
+    const ray = new THREE.Raycaster()
+    let downXY = null
+    const onDown = e => { downXY = [e.clientX, e.clientY] }
+    const onUp = e => {
+      if (!downXY || !group) return
+      const dx = e.clientX - downXY[0], dy = e.clientY - downXY[1]
+      downXY = null
+      if (dx * dx + dy * dy > 25) return // that was an orbit drag
+      const rect = renderer.domElement.getBoundingClientRect()
+      ray.setFromCamera(new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1), camera)
+      const hits = ray.intersectObjects(group.children.filter(o => o.isMesh), false)
+      WS_Store.setSelected(hits.length ? hits[0].object.userData.part.id : null)
+    }
+    renderer.domElement.addEventListener('pointerdown', onDown)
+    renderer.domElement.addEventListener('pointerup', onUp)
+
+    function frame(now) {
+      raf = requestAnimationFrame(frame)
+      if (!visible) return
+      const t = now / 1000
+      const exp = WS_Store.explosion || 0
+      if (group) {
+        const meshes = group.children.filter(o => o.isMesh)
+        for (const o of meshes) {
+          const target = o.userData.base.clone().addScaledVector(o.userData.dir, exp * 1.4)
+          o.position.lerp(target, 0.14)
+          if (o.userData.glow) o.userData.glow.position.copy(o.position)
+          const age = (now - o.userData.bornAt) / 1000 - o.userData.appear
+          if (age < 0) { o.visible = false; continue }
+          o.visible = true
+          const s = Math.min(1, age / 0.4)
+          o.scale.setScalar(0.001 + (1 - Math.pow(1 - s, 3)) * 0.999)
+          const sel = WS_Store.selected === o.userData.part.id
+          const mat = o.material
+          if (sel) {
+            if (mat.emissive.getHexString() === '000000') mat.emissive.set('#5cd6ff')
+            mat.emissiveIntensity = Math.max(o.userData.baseEI, 0.35 + 0.25 * Math.sin(t * 5))
+          } else {
+            mat.emissive.set(o.userData.baseEmissive)
+            mat.emissiveIntensity = o.userData.baseEI
+          }
+        }
+        for (const sp of labels) {
+          sp.visible = WS_Store.labels
+          if (sp.visible && sp.userData.follow) {
+            sp.position.copy(sp.userData.follow.position)
+            sp.position.y += sp.userData.offY
+          }
+        }
+      }
+      controls.update()
+      renderer.render(scene, camera)
+    }
+    raf = requestAnimationFrame(frame)
+
+    const resize = () => {
+      const r = host.getBoundingClientRect()
+      const w = Math.max(1, Math.round(r.width))
+      const h = Math.max(1, Math.round(r.height))
+      renderer.setSize(w, h, false)
+      camera.aspect = w / h
+      camera.updateProjectionMatrix()
+    }
+    const ro = new ResizeObserver(resize)
+    ro.observe(host)
+    resize()
+    const io = new IntersectionObserver(en => { visible = en[0].isIntersecting })
+    io.observe(host)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+      io.disconnect()
+      renderer.domElement.removeEventListener('pointerdown', onDown)
+      renderer.domElement.removeEventListener('pointerup', onUp)
+      if (group) wsDisposeGroup(group)
+      controls.dispose()
+      renderer.dispose()
+      if (renderer.domElement.parentNode === host) host.removeChild(renderer.domElement)
+      if (WS_Store._rebuild) delete WS_Store._rebuild
+    }
+  }, [])
+  return jsx('div', { ref: hostRef, className, 'aria-label': '3D workshop viewport' })
+}
+
+function WorkshopTab() {
+  const qc = useQueryClient()
+  const [, force] = useState(0)
+  useEffect(() => WS_Store.subscribe(() => force(v => v + 1)), [])
+  const sceneQ = useQuery({
+    queryKey: ['agentos', 'workshop'],
+    queryFn: () => REST('/workshop/scene')
+  })
+  const initialized = useRef(false)
+  useEffect(() => {
+    const d = sceneQ.data
+    if (d && d.ok && !initialized.current && !WS_Store.scene) {
+      initialized.current = true
+      WS_Store.setScene(d.scene)
+    }
+  }, [sceneQ.data]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [buildPrompt, setBuildPrompt] = useState('')
+  const [cmdPrompt, setCmdPrompt] = useState('')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [listening, setListening] = useState(false)
+  const [micOk] = useState(() => typeof window !== 'undefined' &&
+    !!(window.SpeechRecognition || window.webkitSpeechRecognition))
+  const recRef = useRef(null)
+
+  const scene = WS_Store.scene
+  const parts = (scene && scene.parts) || []
+  const selected = parts.find(p => p.id === WS_Store.selected) || null
+
+  async function run(prompt, mode) {
+    const q = (prompt || '').trim()
+    if (!q || busy) return
+    setErr(''); setBusy(true); WS_Store.setBusy(true)
+    OrbBus.set('working'); Chimes.play('up')
+    try {
+      const r = await REST('/workshop/' + mode, { method: 'POST', body: { prompt: q }, timeoutMs: 180000 })
+      WS_Store.setScene(r.scene)
+      WS_Store.setExplosion(0)
+      if (r.speech) {
+        ConsoleStore.add({ role: 'jarvis', text: r.speech })
+        Tts.speak(r.speech)
+      }
+      qc.invalidateQueries({ queryKey: ['agentos', 'workshop'] })
+    } catch (e) {
+      setErr(String((e && e.message) || e).slice(0, 220))
+    } finally {
+      setBusy(false); WS_Store.setBusy(false); OrbBus.set('idle')
+    }
+  }
+
+  function startVoice() {
+    if (!micOk || listening) return
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    const rec = new SR()
+    recRef.current = rec
+    rec.interimResults = true
+    rec.continuous = false
+    rec.lang = 'en-US'
+    let finalText = ''
+    rec.onresult = ev => {
+      let interim = ''
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const t = ev.results[i][0].transcript
+        if (ev.results[i].isFinal) finalText += t + ' '
+        else interim += t
+      }
+      setCmdPrompt((finalText + interim).trim())
+    }
+    rec.onend = () => {
+      setListening(false)
+      OrbBus.set('idle')
+      if (finalText.trim()) run(finalText.trim(), 'edit')
+    }
+    rec.onerror = () => { setListening(false); OrbBus.set('idle') }
+    setListening(true)
+    OrbBus.set('listening')
+    Chimes.play('up')
+    rec.start()
+  }
+
+  async function resetScene() {
+    try {
+      await REST('/workshop/scene', { method: 'DELETE' })
+      const r = await REST('/workshop/scene')
+      if (r && r.ok) WS_Store.setScene(r.scene)
+      qc.invalidateQueries({ queryKey: ['agentos', 'workshop'] })
+    } catch (e) {
+      setErr('reset failed: ' + String((e && e.message) || e).slice(0, 160))
+    }
+  }
+
+  const busyRow = busy && jsxs('div', { className: 'flex items-center gap-2 text-sm text-(--ui-text-tertiary)', children: [
+    jsx(RingSpin, {}),
+    'JARVIS is working the bench…'
+  ] })
+
+  return jsxs('div', { className: 'mx-auto w-full max-w-6xl flex flex-col gap-3', children: [
+    jsx(AoCard, {
+      label: 'workshop — ' + ((scene && scene.name) || '3d build space'),
+      delay: 20,
+      right: jsxs('div', { className: 'flex items-center gap-3', children: [
+        WS_Store.busy && jsx(RingSpin, { size: 12 }),
+        jsx('button', {
+          type: 'button',
+          className: 'ao-kbd ' + (WS_Store.labels ? 'text-(--ui-accent)' : 'text-(--ui-text-tertiary)'),
+          onClick: () => WS_Store.setLabels(!WS_Store.labels),
+          children: WS_Store.labels ? 'labels on' : 'labels off'
+        }),
+        jsx('button', { type: 'button', className: 'ao-kbd text-(--ui-text-tertiary)', onClick: resetScene, children: 'reset' })
+      ] }),
+      children: jsxs('div', { className: 'flex flex-col gap-3', children: [
+        jsx(Workshop3D, { className: 'h-[480px] w-full rounded-lg border border-(--ui-stroke-secondary) bg-[#060a10]' }),
+        jsxs('div', { className: 'flex items-center gap-3', children: [
+          jsx('span', { className: 'ao-label shrink-0', children: 'explode' }),
+          jsx('input', {
+            type: 'range', min: 0, max: 100, value: Math.round((WS_Store.explosion || 0) * 100),
+            onChange: e => { WS_Store.explosion = Number(e.target.value) / 100 },
+            className: 'min-w-0 flex-1 accent-[#5cd6ff]',
+            'aria-label': 'Explode view'
+          }),
+          jsx('span', { className: 'w-10 shrink-0 text-right font-mono text-xs text-(--ui-text-tertiary)', children: Math.round((WS_Store.explosion || 0) * 100) + '%' })
+        ] }),
+        !scene && !sceneQ.isLoading && jsx('div', { className: 'text-sm text-(--ui-text-tertiary)', children: 'Scene unavailable — try Reset.' }),
+        err && jsx('div', { className: 'text-xs text-[#f85149]', children: err })
+      ] })
+    }),
+    jsxs('div', { className: 'grid grid-cols-1 gap-3 lg:grid-cols-2', children: [
+      jsx(AoCard, {
+        label: 'build from a prompt',
+        delay: 60,
+        children: jsxs('div', { className: 'flex flex-col gap-2', children: [
+          jsxs('div', { className: 'flex items-center gap-2', children: [
+            jsx('input', {
+              value: buildPrompt,
+              onChange: e => setBuildPrompt(e.target.value),
+              onKeyDown: e => { if (e.key === 'Enter') { run(buildPrompt, 'build'); setBuildPrompt('') } },
+              placeholder: 'build a robotic arm…',
+              className: 'min-w-0 flex-1 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) px-3 py-2 text-sm text-(--ui-text-primary) outline-none transition-colors placeholder:text-(--ui-text-tertiary) focus:border-(--ui-accent)'
+            }),
+            jsx('button', {
+              type: 'button', disabled: busy || !buildPrompt.trim(),
+              onClick: () => { const p = buildPrompt; setBuildPrompt(''); run(p, 'build') },
+              className: 'shrink-0 rounded-md border border-(--ui-stroke-secondary) px-3 py-2 text-xs uppercase tracking-wider text-(--ui-text-secondary) transition-colors enabled:hover:border-(--ui-accent) enabled:hover:text-(--ui-accent) disabled:opacity-40',
+              children: 'Build'
+            })
+          ] }),
+          jsx('div', { className: 'text-xs text-(--ui-text-tertiary)', children: 'A fresh build replaces the current scene. Edits keep it.' })
+        ] })
+      }),
+      jsx(AoCard, {
+        label: 'edit / ask jarvis',
+        delay: 120,
+        children: jsxs('div', { className: 'flex flex-col gap-2', children: [
+          jsxs('div', { className: 'flex items-center gap-2', children: [
+            micOk && jsx('button', {
+              type: 'button', onClick: startVoice,
+              className: 'relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-colors ' +
+                (listening
+                  ? 'border-[#f85149] text-[#f85149] hover:bg-[#f8514911]'
+                  : 'border-(--ui-stroke-secondary) text-(--ui-text-secondary) hover:border-(--ui-accent) hover:text-(--ui-accent)'),
+              title: 'Voice edit (or dictate with Typeless)',
+              children: jsx('span', { className: 'text-sm', children: listening ? '■' : '●' })
+            }),
+            jsx('input', {
+              value: cmdPrompt,
+              onChange: e => setCmdPrompt(e.target.value),
+              onKeyDown: e => { if (e.key === 'Enter') { run(cmdPrompt, 'edit'); setCmdPrompt('') } },
+              placeholder: 'make the reactor red… / what is the sensor dome?',
+              className: 'min-w-0 flex-1 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) px-3 py-2 text-sm text-(--ui-text-primary) outline-none transition-colors placeholder:text-(--ui-text-tertiary) focus:border-(--ui-accent)'
+            }),
+            jsx('button', {
+              type: 'button', disabled: busy || !cmdPrompt.trim(),
+              onClick: () => { const p = cmdPrompt; setCmdPrompt(''); run(p, 'edit') },
+              className: 'shrink-0 rounded-md border border-(--ui-stroke-secondary) px-3 py-2 text-xs uppercase tracking-wider text-(--ui-text-secondary) transition-colors enabled:hover:border-(--ui-accent) enabled:hover:text-(--ui-accent) disabled:opacity-40',
+              children: 'Run'
+            })
+          ] }),
+          busyRow
+        ] })
+      })
+    ] }),
+    jsx(AoCard, {
+      label: 'parts — click a row or the model to inspect',
+      delay: 180,
+      right: jsx('span', { className: 'font-mono text-xs text-(--ui-text-quaternary)', children: parts.length + ' parts' }),
+      children: jsxs('div', { className: 'flex flex-col gap-1', children: [
+        jsx('div', { className: 'flex flex-wrap gap-1.5', children: parts.map(p => jsx('button', {
+          type: 'button',
+          key: p.id,
+          onClick: () => WS_Store.setSelected(WS_Store.selected === p.id ? null : p.id),
+          className: 'ao-in rounded-full border px-2.5 py-1 text-xs transition-colors ' +
+            (WS_Store.selected === p.id
+              ? 'border-(--ui-accent) text-(--ui-accent)'
+              : 'border-(--ui-stroke-secondary) text-(--ui-text-secondary) hover:border-(--ui-accent) hover:text-(--ui-accent)'),
+          style: { animationDelay: 60 + parts.indexOf(p) * 40 + 'ms' },
+          children: p.label || p.id
+        })) }),
+        selected && jsxs('div', { className: 'mt-2 rounded-md border border-(--ui-accent)/30 bg-(--ui-tertiary-background) px-2.5 py-2', children: [
+          jsxs('div', { className: 'flex items-baseline justify-between gap-2', children: [
+            jsx('span', { className: 'text-sm font-medium text-(--ui-text-primary)', children: selected.label || selected.id }),
+            jsx('span', { className: 'font-mono text-[0.65rem] uppercase text-(--ui-text-tertiary)', children: selected.shape })
+          ] }),
+          selected.desc && jsx('div', { className: 'mt-1 text-xs leading-relaxed text-(--ui-text-secondary)', children: selected.desc }),
+          jsx('button', {
+            type: 'button',
+            className: 'ao-runbtn mt-2',
+            disabled: busy,
+            onClick: () => run('explain what the "' + (selected.label || selected.id) + '" part is and what it does on this object', 'edit'),
+            children: [jsx('span', { className: 'text-(--ui-accent)', children: '▸' }), 'what is this?']
+          })
+        ] })
+      ] })
+    })
+  ] })
+}
+
 // ------------------------------------------------------------ quotes (no-auth market tickers)
 
 function QuoteRow({ q, onRemove, delay }) {
@@ -4804,6 +5282,7 @@ function AgentosPage() {
     ['vision', 'Vision'],
     ['money', 'Money'],
     ['goals', 'Goals'],
+    ['workshop', 'Workshop'],
     ['settings', 'Settings']
   ]
   const tabIndex = tabs.findIndex(t => t[0] === tab)
@@ -4977,6 +5456,7 @@ function AgentosPage() {
           jsx(WidgetBoundary, { children: jsx(GoalsCard, {}) }),
           jsx(WidgetBoundary, { children: jsx(ExportCard, {}) })
         ] }),
+        tab === 'workshop' && jsx(WidgetBoundary, { children: jsx(WorkshopTab, {}) }),
         tab === 'settings' && jsx(WidgetBoundary, { children: jsx(SettingsSection, {}) })
       ] }),
       jsx(Spotlight, { open: spotOpen, onClose: () => setSpotOpen(false) }),
