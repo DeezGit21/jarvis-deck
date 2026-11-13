@@ -1933,6 +1933,36 @@ function CalendarCard() {
   const buckets = { today: [], tomorrow: [], later: [] }
   for (const r of rows) buckets[groupOf(r.when)].push(r)
   const failing = accounts.filter(a => !a.ok)
+  // write path — add an event to either account's primary calendar
+  const [addOpen, setAddOpen] = useState(false)
+  const [title, setTitle] = useState('')
+  const [acct, setAcct] = useState('')
+  const [day, setDay] = useState('today')
+  const [time, setTime] = useState('')
+  const [dur, setDur] = useState('45')
+  const [adding, setAdding] = useState(false)
+  const [addMsg, setAddMsg] = useState(null)
+  const acctNames = accounts.map(a => a.name)
+  const acctSel = acct || acctNames[0] || 'personal'
+  const fld = 'rounded-md border border-(--ui-accent)/40 bg-[rgba(6,10,16,.6)] px-2 py-1 font-mono text-xs text-(--ui-text-primary) outline-none focus:border-(--ui-accent)'
+  async function submitAdd() {
+    if (!title.trim() || adding) return
+    setAdding(true)
+    setAddMsg(null)
+    try {
+      const r = await REST('/calendar/add', {
+        method: 'POST',
+        body: { account: acctSel, title: title.trim(), day, start: time, duration_min: parseInt(dur, 10) || 45 }
+      })
+      setAddMsg(r.ok ? 'added' + (r.verified ? ' + verified' : '') + ' — ' + r.summary + ' @ ' + fmtWhen(r.start) + ' (' + r.account + ')' : null)
+      if (r.ok) { setTitle(''); q.refetch(); Chimes.play('up') } else Chimes.play('down')
+    } catch (e) {
+      setAddMsg('failed: ' + (e && e.message ? e.message : 'unknown error'))
+      Chimes.play('down')
+    } finally {
+      setAdding(false)
+    }
+  }
   return jsx(AoCard, {
     label: 'calendar \u00b7 both accounts',
     delay: 200,
@@ -1941,6 +1971,12 @@ function CalendarCard() {
         jsx('button', {
           type: 'button',
           className: 'text-xs text-(--ui-accent)',
+          onClick: () => setAddOpen(!addOpen),
+          children: addOpen ? '\u00d7' : '+ add'
+        }),
+        jsx('button', {
+          type: 'button',
+          className: 'text-xs text-(--ui-accent) ml-2',
           onClick: () => q.refetch(),
           children: 'Refresh'
         }),
@@ -1960,6 +1996,27 @@ function CalendarCard() {
         q.error && jsx('div', { className: 'mt-2 text-sm text-(--ui-text-secondary)', children: q.error.message }),
         d && jsxs(Fragment, {
           children: [
+            addOpen && jsxs('div', { className: 'mb-3 rounded-lg border border-(--ui-stroke-secondary) bg-[rgba(6,10,16,.45)] p-2.5', children: [
+              jsx('input', {
+                className: fld + ' w-full',
+                placeholder: 'event title \u2014 e.g. focus block, estimate call',
+                value: title,
+                onChange: e => setTitle(e.target.value),
+                onKeyDown: e => { if (e.key === 'Enter') submitAdd() }
+              }),
+              jsxs('div', { className: 'mt-2 flex flex-wrap items-center gap-2 text-xs', children: [
+                jsx('select', { className: fld, value: acctSel, onChange: e => setAcct(e.target.value),
+                  children: (acctNames.length ? acctNames : ['personal', 'arctic az']).map(n => jsx('option', { value: n, children: n }, n)) }),
+                jsx('select', { className: fld, value: day, onChange: e => setDay(e.target.value),
+                  children: ['today', 'tomorrow'].map(n => jsx('option', { value: n, children: n }, n)) }),
+                jsx('input', { className: fld + ' w-20', placeholder: '14:00', value: time, onChange: e => setTime(e.target.value) }),
+                jsx('select', { className: fld, value: dur, onChange: e => setDur(e.target.value),
+                  children: ['30', '45', '60', '90', '120'].map(n => jsx('option', { value: n, children: n + ' min' }, n)) }),
+                jsx('button', { type: 'button', className: 'ao-btn text-[10px]', onClick: submitAdd, disabled: adding,
+                  children: adding ? 'adding\u2026' : 'ADD TO CALENDAR' })
+              ] }),
+              addMsg && jsx('div', { className: 'mt-2 text-[0.625rem] font-mono text-(--ui-text-tertiary)', children: addMsg })
+            ] }),
             rows.length === 0 && !failing.length && jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'nothing on the calendar in the next 2 days' }),
             ['today', 'tomorrow', 'later'].map(g => {
               const items = buckets[g]
