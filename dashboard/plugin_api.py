@@ -63,6 +63,12 @@ AGENTOS_TZ = _dt.timezone(_dt.timedelta(hours=float(_CFG.get("tz_offset_hours", 
 # ---------------------------------------------------------------- helpers
 
 
+# Windows: never let child processes (gws.cmd, ssh, hermes chat, shell one-liners)
+# pop a visible console window over the user's desktop. CREATE_NEW_CONSOLE sites
+# (webull login) are deliberately excluded — they need user interaction.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
+
 def _sh(args: list[str], timeout: int = 30, env: dict | None = None) -> tuple[int, str, str]:
     # Strip PYTHONPATH/PYTHONHOME: a stray PYTHONPATH pointing at a foreign
     # site-packages (e.g. a hermes installs venv) shadows the agentos venv's
@@ -70,7 +76,8 @@ def _sh(args: list[str], timeout: int = 30, env: dict | None = None) -> tuple[in
     if env is None:
         env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
     try:
-        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env)
+        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env,
+                           creationflags=_NO_WINDOW)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return 124, "", f"timeout after {timeout}s"
@@ -115,7 +122,8 @@ def _psql(sql: str, timeout: int = 25) -> list[list[str]]:
         "-t", "--csv",
     ]
     try:
-        p = subprocess.run(args, input=sql, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(args, input=sql, capture_output=True, text=True, timeout=timeout,
+                           creationflags=_NO_WINDOW)
         rc, out, err = p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         rc, out, err = 124, "", f"timeout after {timeout}s"
@@ -447,7 +455,8 @@ def _ssh_py(script: str, timeout: int = 30) -> tuple[int, str, str]:
     (`python3 -`), same pattern as _psql, so no remote-shell quoting issues."""
     args = ["ssh", str(_DB_CFG.get("ssh_host", "db-host")), "python3", "-"]
     try:
-        p = subprocess.run(args, input=script, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(args, input=script, capture_output=True, text=True, timeout=timeout,
+                           creationflags=_NO_WINDOW)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return 124, "", f"timeout after {timeout}s"
@@ -891,6 +900,7 @@ def brief_generate():
         p = subprocess.run(
             ["hermes", "chat", "-Q", "--query-file", "-"],
             input=prompt, capture_output=True, text=True, timeout=480,
+            creationflags=_NO_WINDOW,
         )
         rc, out, err = p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
@@ -1048,6 +1058,7 @@ def command(body: dict = Body(...)):
         p = subprocess.run(
             ["hermes", "chat", "-Q", "--query-file", "-"],
             input=query, capture_output=True, text=True, timeout=600,
+            creationflags=_NO_WINDOW,
         )
         rc, out, err = p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
@@ -1161,6 +1172,7 @@ def _run_hermes_prompt(prompt: str, timeout: int = 480) -> str:
         p = subprocess.run(
             ["hermes", "chat", "-Q", "--query-file", "-"],
             input=prompt, capture_output=True, text=True, timeout=timeout,
+            creationflags=_NO_WINDOW,
         )
         rc, out, err = p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
@@ -2348,7 +2360,8 @@ def agents_activity():
 
 def _gh(*args: str, timeout: int = 20):
     import subprocess
-    return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=timeout,
+                          creationflags=_NO_WINDOW)
 
 
 @router.get("/releases")
@@ -2650,7 +2663,8 @@ def _remediation_scan(manual: bool = False) -> dict:
 
 def _run_shell_cmd(cmd: str, timeout: int = 120) -> tuple[int, str]:
     try:
-        p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout,
+                           creationflags=_NO_WINDOW)
         return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()[-400:]
     except subprocess.TimeoutExpired:
         return 124, "timeout after " + str(timeout) + "s"
