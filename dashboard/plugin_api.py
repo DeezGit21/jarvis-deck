@@ -12,6 +12,7 @@ import difflib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import threading
@@ -62,11 +63,12 @@ AGENTOS_TZ = _dt.timezone(_dt.timedelta(hours=float(_CFG.get("tz_offset_hours", 
 # ---------------------------------------------------------------- helpers
 
 
-def _sh(args: list[str], timeout: int = 30) -> tuple[int, str, str]:
+def _sh(args: list[str], timeout: int = 30, env: dict | None = None) -> tuple[int, str, str]:
     # Strip PYTHONPATH/PYTHONHOME: a stray PYTHONPATH pointing at a foreign
     # site-packages (e.g. a hermes installs venv) shadows the agentos venv's
     # own packages — a broken numpy there made webull imports fail.
-    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+    if env is None:
+        env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
     try:
         p = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env)
         return p.returncode, p.stdout, p.stderr
@@ -183,6 +185,191 @@ def metrics_leads():
               "source": r[4], "status": r[5], "value": float(r[6]), "created": r[7]}
              for r in rows]
     return {"date": _local_date(), "count": len(leads), "leads": leads}
+
+
+# ---------------------------------------------------------------- calendar & mail (gws CLI)
+
+
+def _gws_accounts() -> list[dict]:
+    """gws account profiles — default config + any extra config dirs.
+
+    Override via agentos.yaml `gws.accounts: [{name, config_dir}]`. Each extra
+    account needs GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file (key lives in its
+    config dir) — set up with `gws auth login` against that config dir.
+    """
+    cfg = _CFG.get("gws") if isinstance(_CFG.get("gws"), dict) else {}
+    out = []
+    for a in (cfg.get("accounts") or [{"name": "personal", "config_dir": ""},
+                                      {"name": "arctic az", "config_dir": str(HOME / ".config" / "gws-second")}]):
+        if not isinstance(a, dict) or not a.get("name"):
+            continue
+        out.append({"name": str(a["name"]), "config_dir": str(a.get("config_dir") or "")})
+    return out
+
+
+def _gws_path() -> str:
+    return shutil.which("gws") or str(HOME / "AppData" / "Roaming" / "npm" / "gws.cmd")
+
+
+def _gws_run(args: list[str], config_dir: str, timeout: int = 60) -> tuple[int, str, str]:
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+    if config_dir:
+        # Windows-native path required — a POSIX-style path reaches the node
+        # CLI unresolved and fails with "No OAuth client configured".
+        env["GOOGLE_WORKSPACE_CLI_CONFIG_DIR"] = os.path.normpath(config_dir)
+        env["GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND"] = "file"
+    return _sh([_gws_path()] + args, timeout=timeout, env=env)
+
+
+def _json_tail(out: str):
+    """gws prints a 'Using keyring backend:' banner before the JSON body."""
+    idx = out.find("{")
+    if idx < 0:
+        idx = out.find("[")
+    if idx < 0:
+        return None
+    try:
+        return json.loads(out[idx:])
+    except json.JSONDecodeError:
+        return None
+
+
+def _cached_json(name: str, ttl: int, refetch):
+    """Disk-cached fetch — stale copy survives backend restarts and gws hiccups."""
+    CACHE.mkdir(parents=True, exist_ok=True)
+    path = CACHE / name
+    now = time.time()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if now - data.get("ts", 0) < ttl:
+            return data
+    except (json.JSONDecodeError, OSError):
+        data = None
+    fresh = refetch()
+    if fresh is not None:
+        fresh["ts"] = now
+        path.write_text(json.dumps(fresh), encoding="utf-8")
+        return fresh
+    if data is not None:
+        data["stale"] = True
+        return data
+    return {"ts": 0, "stale": True, "accounts": []}
+
+
+def _parse_agenda(raw) -> list[dict]:
+    """Normalize `gws calendar +agenda` JSON — shape varies by version."""
+    if isinstance(raw, dict):
+        raw = raw.get("events") or raw.get("items") or raw.get("days") or []
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for e in raw:
+        if not isinstance(e, dict):
+            continue
+        start = e.get("start")
+        end = e.get("end")
+        # +agenda events: flat ISO strings; raw API events: nested {dateTime,date}
+        if isinstance(start, dict):
+            when = start.get("dateTime") or start.get("date") or ""
+            all_day = "dateTime" not in start
+            end_s = end.get("dateTime") or end.get("date") or "" if isinstance(end, dict) else ""
+        else:
+            when = str(start or "")
+            all_day = "T" not in when
+            end_s = str(end or "") if end else ""
+        out.append({
+            "when": when,
+            "all_day": all_day,
+            "end": end_s,
+            "summary": e.get("summary") or e.get("title") or "(untitled)",
+            "calendar": e.get("calendar") or e.get("calendarName") or e.get("calendar_name") or "",
+            "location": e.get("location") or "",
+        })
+    return out
+
+
+def _parse_triage(raw) -> list[dict]:
+    """Normalize `gws gmail +triage` JSON — sender/subject/date per help text."""
+    if isinstance(raw, dict):
+        raw = raw.get("messages") or raw.get("items") or raw.get("emails") or []
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for m in raw:
+        if not isinstance(m, dict):
+            continue
+        sender = m.get("sender") or m.get("from") or ""
+        if "<" in sender and sender.endswith(">"):
+            sender = sender.split("<", 1)[0].strip() or sender
+        out.append({
+            "from": sender,
+            "subject": m.get("subject") or "(no subject)",
+            "date": m.get("date") or m.get("internalDate") or "",
+            "snippet": (m.get("snippet") or "")[:160],
+            "id": str(m.get("id") or m.get("messageId") or ""),
+        })
+    return out
+
+
+def _fetch_calendar_account(config_dir: str) -> tuple[bool, str, list[dict]]:
+    """All calendars for one account, now → +2 days.
+
+    Uses raw events.list per calendar — the `+agenda` helper's day window is
+    shifted +1 (timeMin lands on tomorrow), which silently drops today.
+    """
+    rc, out, err = _gws_run(["calendar", "calendarList", "list", "--format", "json"], config_dir)
+    body = _json_tail(out) if rc == 0 else None
+    cals = (body or {}).get("items", []) if isinstance(body, dict) else []
+    if not cals:
+        return rc == 0, (err or out)[:160], []
+    now = _dt.datetime.now(AGENTOS_TZ)
+    tmin = now.isoformat(timespec="seconds")
+    tmax = (now + _dt.timedelta(days=2)).isoformat(timespec="seconds")
+    rows: list[dict] = []
+    last_err = ""
+    for cal in cals:
+        cid = str(cal.get("id") or "")
+        if not cid:
+            continue
+        params = {"calendarId": cid, "timeMin": tmin, "timeMax": tmax,
+                  "singleEvents": True, "orderBy": "startTime", "maxResults": 20}
+        rc2, out2, err2 = _gws_run(["calendar", "events", "list", "--format", "json",
+                                    "--params", json.dumps(params)], config_dir)
+        if rc2 != 0:
+            last_err = (err2 or out2)[:160]
+            continue
+        body2 = _json_tail(out2)
+        for e in ((body2 or {}).get("items") or []) if isinstance(body2, dict) else []:
+            parsed = _parse_agenda([e])
+            if parsed:
+                row = parsed[0]
+                row["calendar"] = str(cal.get("summary") or cid)
+                rows.append(row)
+    return True, last_err, rows
+
+
+def _fetch_gws_pair(kind: str) -> dict:
+    """One read per account: calendar agenda / unread-mail triage."""
+    accounts = []
+    for a in _gws_accounts():
+        if kind == "calendar":
+            ok, err, rows = _fetch_calendar_account(a["config_dir"])
+        else:
+            rc, out, err = _gws_run(["gmail", "+triage", "--max", "12", "--format", "json"], a["config_dir"])
+            ok, err, rows = rc == 0, (err or out)[:160], _parse_triage(_json_tail(out) if rc == 0 else None)
+        accounts.append({"name": a["name"], "ok": ok, "error": err if not ok else "",
+                         "items": rows})
+    return {"date": _local_date(), "accounts": accounts}
+
+
+@router.get("/calendar/agenda")
+def calendar_agenda():
+    return _cached_json("gws-agenda.json", ttl=300, refetch=lambda: _fetch_gws_pair("calendar"))
+
+
+@router.get("/mail/inbox")
+def mail_inbox():
+    return _cached_json("gws-mail.json", ttl=180, refetch=lambda: _fetch_gws_pair("mail"))
 
 
 # ---------------------------------------------------------------- status

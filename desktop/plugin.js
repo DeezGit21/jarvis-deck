@@ -1885,6 +1885,179 @@ function MetricsCard() {
   })
 }
 
+// ------------------------------------------------------------ calendar & mail (gws)
+
+const GWS_TAG_STYLE = {
+  'personal': { background: 'rgba(92,214,255,.10)', color: '#5cd6ff' },
+  'arctic az': { background: 'rgba(211,153,34,.12)', color: '#d29922' }
+}
+
+function gwsTag(acct) {
+  const st = GWS_TAG_STYLE[String(acct).toLowerCase()] || { background: 'rgba(148,163,184,.12)', color: '#94a3b8' }
+  return jsx('span', {
+    className: 'shrink-0 rounded px-1 py-px font-mono text-[9px] uppercase tracking-wide',
+    style: st,
+    children: acct
+  })
+}
+
+function fmtWhen(when, allDay) {
+  if (!when) return ''
+  if (allDay) return 'all-day'
+  const d = new Date(when)
+  if (isNaN(d)) return when
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
+function CalendarCard() {
+  const q = useQuery({
+    queryKey: ['agentos', 'calendar-agenda'],
+    queryFn: () => REST('/calendar/agenda'),
+    refetchInterval: 300000
+  })
+  const d = q.data
+  const accounts = (d && d.accounts) || []
+  const rows = accounts.flatMap(a => (a.items || []).map(e => ({ ...e, acct: a.name })))
+    .sort((x, y) => String(x.when).localeCompare(String(y.when)))
+  // group by local calendar date — all-day dates are plain YYYY-MM-DD (no TZ
+  // shifting through new Date), timed events convert to local date strings
+  const localDay = w => {
+    if (!w) return ''
+    if (!w.includes('T')) return w.slice(0, 10)
+    const dt = new Date(w)
+    return isNaN(dt) ? '' : dt.toLocaleDateString('sv')
+  }
+  const todayStr = new Date().toLocaleDateString('sv')
+  const tomorrowStr = new Date(Date.now() + 864e5).toLocaleDateString('sv')
+  const groupOf = w => { const k = localDay(w); return k === todayStr ? 'today' : k === tomorrowStr ? 'tomorrow' : 'later' }
+  const buckets = { today: [], tomorrow: [], later: [] }
+  for (const r of rows) buckets[groupOf(r.when)].push(r)
+  const failing = accounts.filter(a => !a.ok)
+  return jsx(AoCard, {
+    label: 'calendar \u00b7 both accounts',
+    delay: 200,
+    right: jsxs(Fragment, {
+      children: [
+        jsx('button', {
+          type: 'button',
+          className: 'text-xs text-(--ui-accent)',
+          onClick: () => q.refetch(),
+          children: 'Refresh'
+        }),
+        jsx('button', {
+          type: 'button',
+          className: 'ao-btn ml-2 text-[10px]',
+          onClick: () => { Chimes.play('up'); ConsoleStore.send('read my calendar (both accounts) and plan my day: time blocks, conflicts, and what to push') },
+          children: '\uD83E\uDD16 ASK JARVIS'
+        })
+      ]
+    }),
+    children: jsxs(Fragment, {
+      children: [
+        q.isLoading && jsxs('div', { className: 'space-y-3', children: [
+          jsx(Skel, { h: '.9rem' }), jsx(Skel, { h: '.9rem', delay: 120 }), jsx(Skel, { h: '.9rem', delay: 240 })
+        ] }),
+        q.error && jsx('div', { className: 'mt-2 text-sm text-(--ui-text-secondary)', children: q.error.message }),
+        d && jsxs(Fragment, {
+          children: [
+            rows.length === 0 && !failing.length && jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'nothing on the calendar in the next 2 days' }),
+            ['today', 'tomorrow', 'later'].map(g => {
+              const items = buckets[g]
+              if (!items.length) return null
+              return jsxs('div', { className: 'mt-2 first:mt-0', children: [
+                jsx('div', { className: 'ao-label mb-1', children: g }),
+                jsx('div', { className: 'space-y-1', children: items.map((e, i) =>
+                  jsxs('div', {
+                    className: 'ao-in flex items-baseline gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
+                    style: { animationDelay: 150 + i * 70 + 'ms', cursor: 'pointer' },
+                    onClick: () => { Chimes.play('up'); ConsoleStore.send('tell me about the "' + e.summary + '" event (' + (e.all_day ? 'all-day' : fmtWhen(e.when)) + ') on my ' + e.acct + ' calendar') },
+                    title: 'Ask JARVIS about this event',
+                    children: [
+                      jsx('span', { className: 'w-16 shrink-0 font-mono text-[0.6875rem] text-(--ui-text-tertiary)', children: fmtWhen(e.when, e.all_day) }),
+                      jsxs('span', { className: 'min-w-0 flex-1 truncate text-(--ui-text-secondary)', children: [
+                        e.summary,
+                        e.calendar && !/primary/i.test(e.calendar) && jsx('span', { className: 'ml-1.5 text-[0.625rem] text-(--ui-text-quaternary)', children: e.calendar })
+                      ] }),
+                      gwsTag(e.acct)
+                    ]
+                  }, e.acct + e.when + e.summary + i))
+                })
+              ] }, g)
+            }),
+            failing.map(a => jsx('div', { className: 'mt-2 truncate text-[0.625rem] text-(--ui-text-quaternary)', title: a.error, children: a.name + ': calendar unavailable' }, 'err-' + a.name))
+          ]
+        })
+      ]
+    })
+  })
+}
+
+function MailCard() {
+  const q = useQuery({
+    queryKey: ['agentos', 'mail-inbox'],
+    queryFn: () => REST('/mail/inbox'),
+    refetchInterval: 180000
+  })
+  const d = q.data
+  const accounts = (d && d.accounts) || []
+  const rows = accounts.flatMap(a => (a.items || []).map(m => ({ ...m, acct: a.name })))
+  const failing = accounts.filter(a => !a.ok)
+  return jsx(AoCard, {
+    label: 'inbox \u00b7 unread \u00b7 both accounts',
+    delay: 240,
+    right: jsxs(Fragment, {
+      children: [
+        jsx('button', {
+          type: 'button',
+          className: 'text-xs text-(--ui-accent)',
+          onClick: () => q.refetch(),
+          children: 'Refresh'
+        }),
+        jsx('button', {
+          type: 'button',
+          className: 'ao-btn ml-2 text-[10px]',
+          onClick: () => { Chimes.play('up'); ConsoleStore.send('triage my unread email across both accounts: what needs a reply today, what can wait, what is noise') },
+          children: '\uD83E\uDD16 ASK JARVIS'
+        })
+      ]
+    }),
+    children: jsxs(Fragment, {
+      children: [
+        q.isLoading && jsxs('div', { className: 'space-y-3', children: [
+          jsx(Skel, { h: '.9rem' }), jsx(Skel, { h: '.9rem', delay: 120 }), jsx(Skel, { h: '.9rem', delay: 240 })
+        ] }),
+        q.error && jsx('div', { className: 'mt-2 text-sm text-(--ui-text-secondary)', children: q.error.message }),
+        d && jsxs(Fragment, {
+          children: [
+            rows.length === 0 && !failing.length && jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'inboxes clear \u2014 no unread mail' }),
+            jsx('div', { className: 'space-y-1', children: rows.map((m, i) =>
+              jsxs('div', {
+                className: 'ao-in flex items-baseline gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
+                style: { animationDelay: 150 + i * 70 + 'ms', cursor: 'pointer' },
+                onClick: () => { Chimes.play('up'); ConsoleStore.send('summarize the unread email "' + m.subject + '" from ' + m.from + ' in my ' + m.acct + ' inbox and draft a reply if it needs one') },
+                title: 'Ask JARVIS to summarize + draft a reply',
+                children: [
+                  jsx('span', { className: 'mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', style: { background: 'var(--ui-accent)' } }),
+                  jsxs('span', { className: 'min-w-0 flex-1', children: [
+                    jsxs('span', { className: 'flex items-baseline gap-2', children: [
+                      jsx('span', { className: 'shrink-0 max-w-[9rem] truncate text-xs font-semibold text-(--ui-text-primary)', children: m.from || '(unknown)' }),
+                      jsx('span', { className: 'truncate text-xs text-(--ui-text-secondary)', children: m.subject }),
+                      m.date && jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.625rem] text-(--ui-text-quaternary)', children: m.date })
+                    ] }),
+                    m.snippet && jsx('div', { className: 'mt-0.5 truncate text-[0.625rem] text-(--ui-text-tertiary)', children: m.snippet })
+                  ] }),
+                  gwsTag(m.acct)
+                ]
+              }, (m.id || i) + '-' + m.acct)
+            ) }),
+            failing.map(a => jsx('div', { className: 'mt-2 truncate text-[0.625rem] text-(--ui-text-quaternary)', title: a.error, children: a.name + ': inbox unavailable' }, 'err-' + a.name))
+          ]
+        })
+      ]
+    })
+  })
+}
+
 // ------------------------------------------------------------ status
 
 function StatusCard() {
@@ -4550,6 +4723,8 @@ const WIDGETS = {
   todos:   { title: 'Today',         span: 6,  rows: 4, render: () => jsx(TodosCard, {}) },
   brief:   { title: 'Brief',         span: 8,  rows: 4, render: () => jsx(BriefCard, {}) },
   status:  { title: 'Status',        span: 4,  rows: 5, render: () => jsx(StatusCard, {}) },
+  calendar:{ title: 'Calendar',     span: 4,  rows: 4, render: () => jsx(CalendarCard, {}) },
+  mail:    { title: 'Inbox',        span: 4,  rows: 4, render: () => jsx(MailCard, {}) },
   automation: { title: 'Automation', span: 4,  rows: 4, render: () => jsx(AutomationCard, {}) },
   memory:  { title: 'Memory',        span: 4,  rows: 4, render: () => jsx(MemoryCard, {}) },
   metrics: { title: 'Metrics',       span: 4,  rows: 4, render: () => jsx(MetricsCard, {}) },
@@ -4561,7 +4736,7 @@ const WIDGETS = {
   releases:{ title: 'Release board',  span: 6, rows: 4, render: () => jsx(ReleasesCard, {}) }
 }
 
-const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'todos', 'brief', 'status', 'automation', 'memory', 'metrics', 'quotes', 'agents', 'releases', 'console']
+const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'todos', 'brief', 'status', 'calendar', 'mail', 'automation', 'memory', 'metrics', 'quotes', 'agents', 'releases', 'console']
 
 function defaultSizes() {
   const sizes = {}
