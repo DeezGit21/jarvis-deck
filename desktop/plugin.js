@@ -350,6 +350,24 @@ html.ao-companion, html.ao-companion body, html.ao-companion #root { background:
 .ao-orb-panel > span { overflow: hidden; text-overflow: ellipsis; }
 .ao-orb-panel:hover { border-color: var(--ui-accent); color: var(--ui-text-primary); }
 
+/* --- mobile: no horizontal pan, ever --- */
+/* The page scroller must never pan sideways — content wider than the viewport
+   is clipped instead of pushing cards off-screen left (the mobile cutoff bug). */
+.ao-scrollpage { overflow-x: hidden; }
+/* action rows (advisor): when the button group can't fit beside the text it
+   wraps to its own right-aligned line instead of squeezing text to a sliver */
+.ao-row-actions { margin-left: auto; }
+@media (max-width: 899px) {
+  /* hero: action ribbon first, telemetry wraps under it; hide desktop-only
+     mode-number shortcuts so the row fits */
+  .ao-hero { flex-wrap: wrap; row-gap: 6px; }
+  .ao-hero-meta { order: 2; flex-basis: 100%; flex-wrap: wrap; row-gap: 4px; }
+  .ao-hero-actions { order: 1; }
+  .ao-mode-sw { display: none; }
+  /* action rows: buttons always drop to their own line so text gets full width */
+  .ao-row-actions { flex-basis: 100%; justify-content: flex-end; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ao-in, .ao-led, .ao-skel, .ao-ring, .ao-aurora, .ao-mini-orb { animation: none !important; }
   .ao-bar > i, .ao-tabline, .ao-grid-flip, .ao-card, .ao-body, .ao-collapse { transition: none !important; }
@@ -2558,7 +2576,7 @@ function ActionRow({ a, busy, onDone, onKill }) {
     setCmdBusy(false)
   }
   return jsxs('div', {
-    className: 'flex items-start gap-2 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) p-2',
+    className: 'flex flex-wrap items-start gap-2 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) p-2',
     onMouseEnter: () => HoverBus.set((a.text || '').toLowerCase()),
     onMouseLeave: () => HoverBus.clear(),
     children: [
@@ -2567,7 +2585,7 @@ function ActionRow({ a, busy, onDone, onKill }) {
         jsx('span', { className: 'block text-sm leading-snug text-(--ui-text-primary) ' + (a.status && a.status !== 'open' ? 'line-through opacity-50' : ''), children: a.text }),
         cmdBusy && jsx('div', { className: 'ao-mini-term', children: lastReply || 'Running\u2026' })
       ] }),
-      a.status === 'open' || !a.status ? jsxs('div', { className: 'flex shrink-0 gap-1', children: [
+      a.status === 'open' || !a.status ? jsxs('div', { className: 'ao-row-actions flex shrink-0 gap-1', children: [
         jsx('button', {
           type: 'button',
           className: 'ao-btn',
@@ -2666,7 +2684,7 @@ function AdvisorCard() {
           'accountability loop — ', loopRows.length, ' open'
         ] }),
         jsx('div', { className: 'flex flex-col gap-1.5', children: loopRows.map(r => jsxs('div', {
-          className: 'flex items-start gap-2 rounded-md border px-2 py-1.5 ' +
+          className: 'flex flex-wrap items-start gap-2 rounded-md border px-2 py-1.5 ' +
             (r.escalated ? 'border-[#d29922]/50 bg-[#d2992211]' : 'border-(--ui-stroke-secondary)'),
           onMouseEnter: () => HoverBus.set((r.text || '').toLowerCase()),
           onMouseLeave: () => HoverBus.clear(),
@@ -2676,7 +2694,7 @@ function AdvisorCard() {
               children: r.escalated ? '⚠ ' + r.age_days + 'd ignored' : r.age_days + 'd'
             }),
             jsx('span', { className: 'min-w-0 flex-1 text-xs leading-snug text-(--ui-text-secondary)', children: r.text }),
-            jsxs('div', { className: 'flex shrink-0 gap-1', children: [
+            jsxs('div', { className: 'ao-row-actions flex shrink-0 gap-1', children: [
               jsx('button', {
                 disabled: busyId === r.id,
                 onClick: () => act(r.id, 'done'),
@@ -3741,7 +3759,7 @@ function HeroWidget({ onOpenSpotlight, onOpenServices }) {
     style: { padding: '8px 18px', minHeight: 44 },
     children: [
       // compact state wordmark
-      jsxs('div', { className: 'flex items-center gap-2 shrink-0', children: [
+      jsxs('div', { className: 'ao-hero-meta flex flex-wrap items-center gap-2 shrink-0', children: [
         jsx('span', {
           className: 'text-sm font-semibold ao-hero-glow',
           style: { color: ORB_STATE_COLORS[state] },
@@ -3795,9 +3813,9 @@ function HeroWidget({ onOpenSpotlight, onOpenServices }) {
         }) : metrics && jsx('span', { className: 'font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: 'MTD ' + fmtMoney(metrics.revenue_mtd) })
       ] }),
       // right side: protocol buttons
-      jsxs('div', { className: 'flex items-center gap-1.5 ml-auto', children: [
+      jsxs('div', { className: 'ao-hero-actions flex flex-wrap items-center gap-1.5 ml-auto', children: [
         // full-viewport modes: Alt+1..4 (brief / console / graph / hud)
-        jsxs('span', { className: 'flex items-center gap-1 mr-1', children: [
+        jsxs('span', { className: 'ao-mode-sw flex items-center gap-1 mr-1', children: [
           ['brief', '1'], ['console', '2'], ['graph', '3'], ['hud', '4']
         ].map(([m, k]) => jsx('button', {
           type: 'button',
@@ -5006,6 +5024,17 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
   const [layout, setLayout] = useState(loadLayout)
   const layoutRef = useRef(layout)
   layoutRef.current = layout
+  // The CSS grid is 4 columns below 900px and 12 above. Card spans wider than
+  // the column count create implicit tracks that squeeze cards to slivers —
+  // clamp every span to the active column count (mobile cutoff bug, part 2).
+  const [narrow, setNarrow] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 899px)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 899px)')
+    const on = e => setNarrow(e.matches)
+    try { mq.addEventListener('change', on) } catch { mq.addListener(on) }
+    return () => { try { mq.removeEventListener('change', on) } catch { mq.removeListener(on) } }
+  }, [])
   const dragId = useRef(null)
   const [dragging, setDragging] = useState(null)
   const [overId, setOverId] = useState(null)
@@ -5086,7 +5115,7 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
         key: id,
         'data-widget': id,
         className: cn('ao-grid-flip relative'),
-        style: { gridColumn: 'span ' + size.w, gridRow: 'span ' + size.h },
+        style: { gridColumn: 'span ' + (narrow ? Math.min(size.w, 4) : size.w), gridRow: 'span ' + size.h },
         'data-dragging': isDragging ? '1' : undefined,
         'data-over': isOver ? '1' : undefined,
         draggable: (customize || armed === id) ? 'true' : undefined,
@@ -5564,12 +5593,12 @@ function AgentosPage() {
   }
 
   return jsxs('div', {
-    className: 'relative flex h-full flex-col gap-3 overflow-auto p-4 text-sm',
+    className: 'ao-scrollpage relative flex h-full flex-col gap-3 overflow-auto p-4 text-sm',
     children: [
       jsx(StyleOnce, {}),
       jsx('div', { className: 'ao-aurora' }),
       // header
-      jsxs('div', { className: 'relative z-10 flex items-center justify-between', children: [
+      jsxs('div', { className: 'relative z-10 flex flex-wrap items-center justify-between gap-2', children: [
         jsxs('div', { className: 'flex items-baseline gap-3', children: [
           jsxs('div', { children: [
             jsx('div', {
@@ -5589,7 +5618,7 @@ function AgentosPage() {
             children: 'Ctrl J'
           })
         ] }),
-        jsxs('div', { className: 'flex items-center gap-4', children: [
+        jsxs('div', { className: 'flex flex-wrap items-center gap-4', children: [
           jsxs('div', { className: 'flex items-center gap-1.5', title: 'accent theme', children: [
             Object.entries(AO_THEMES).map(([name, col]) =>
               jsx('span', {
