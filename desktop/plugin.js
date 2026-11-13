@@ -4264,7 +4264,8 @@ function AgentsCard() {
   })
   const d = q.data
   const cron = ((d && d.cron) || []).slice(0, 8)
-  const tasks = ((d && d.tasks) || []).slice(0, 4)
+  // board tasks intentionally NOT shown here — they already live on the Today
+  // card and the To-Do/Tasks board; duplicating them made the overview noisy.
   const row = 'flex items-center gap-2 min-w-0 text-xs'
   return jsx(AoCard, {
     label: 'agent activity - last 48h',
@@ -4283,56 +4284,13 @@ function AgentsCard() {
             jsx('span', { className: 'ml-auto shrink-0 font-mono text-[10px] text-(--ui-text-quaternary)', children: fmtAgo(r.at) }),
             r.error && jsx('span', { title: r.error, className: 'shrink-0 text-[10px] text-[#f85149]', children: '!' })
           ] }, i)
-        ) : jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'no runs in the last 48h' }) }),
-        tasks.length > 0 && jsx('div', { className: 'ao-label mt-1', children: 'board tasks' }),
-        jsx('div', { className: 'space-y-1.5', children: tasks.map((t, i) =>
-          jsxs('div', { className: row + ' ao-in', style: { animationDelay: i * 40 + 'ms' }, children: [
-            jsx(RunDot, { status: t.status }),
-            jsx('span', { className: 'truncate text-(--ui-text-secondary)', title: t.board + ' - ' + t.title, children: t.title }),
-            jsx('span', { className: 'ml-auto shrink-0 font-mono text-[10px] text-(--ui-text-quaternary)', children: t.board.slice(0, 14) })
-          ] }, i)
-        ) })
+        ) : jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'no runs in the last 48h' }) })
       ] })
     ] })
   })
 }
 
-function ReleasesCard() {
-  const q = useQuery({
-    queryKey: ['agentos', 'releases'],
-    queryFn: () => REST('/releases'),
-    refetchInterval: 600000
-  })
-  const d = q.data
-  const repos = (d && d.repos) || []
-  return jsx(AoCard, {
-    label: 'release board - github',
-    delay: 180,
-    right: jsx('span', { className: 'text-xs text-(--ui-text-quaternary)', children: 'auto 10m' }),
-    children: jsxs('div', { className: 'flex flex-col gap-1.5 overflow-y-auto', children: [
-      q.isLoading && jsx(Skel, { h: '6rem' }),
-      q.error && jsx('div', { className: 'text-xs text-(--ui-text-secondary)', children: 'github unreachable' }),
-      d && repos.map((r, i) => jsxs('div', {
-        className: 'ao-in grid grid-cols-[7.5rem_1fr_auto] items-center gap-2 text-xs',
-        style: { animationDelay: i * 50 + 'ms' },
-        children: [
-          jsxs('span', { className: 'truncate font-medium text-(--ui-text-primary)', children: [
-            r.label,
-            jsx('span', { className: 'block text-[9px] font-normal text-(--ui-text-quaternary)', children: r.repo })
-          ] }),
-          jsx('span', { className: 'truncate font-mono text-[10px] text-(--ui-text-secondary)', title: (r.release && r.release.name) || '', children:
-            r.release ? r.release.tag : (r.pushed ? 'no releases - code only' : '-')
-          }),
-          jsxs('span', { className: 'flex items-center gap-2 justify-end', children: [
-            r.ci && jsx(RunDot, { status: r.ci.conclusion === null ? 'running' : r.ci.conclusion }),
-            jsx('span', { className: 'font-mono text-[10px] text-(--ui-text-quaternary)', children: r.pushed ? fmtAgo(r.pushed) : '-' })
-          ] })
-        ]
-      }, r.repo)),
-      d && jsx('div', { className: 'mt-1 border-t border-(--ui-stroke-secondary) pt-1 text-[9px] text-(--ui-text-quaternary)', children: 'play console status: check manually (test track)' })
-    ] })
-  })
-}
+// release board retired — duplicated the projects & apps (status) card
 
 // ------------------------------------------------------------ memory galaxy
 // 3D memory galaxy: kanban tasks / cron jobs / services as a slowly rotating
@@ -5286,15 +5244,16 @@ const WIDGETS = {
   automation: { title: 'Automation', span: 4,  rows: 4, render: () => jsx(AutomationCard, {}) },
   memory:  { title: 'Memory',        span: 4,  rows: 4, render: () => jsx(MemoryCard, {}) },
   metrics: { title: 'Metrics',       span: 4,  rows: 4, render: () => jsx(MetricsCard, {}) },
-  quotes:  { title: 'Tickers',       span: 8,  rows: 4, render: () => jsx(QuotesCard, {}) },
+  // tickers + release board retired from the overview grid: tickers live on
+  // the Money tab (QuotesCard renders there directly), releases duplicated
+  // the projects & apps card. Declutter pass, D's call.
   galaxy:  { title: 'Neural core',   span: 8,  rows: 5, render: p => jsx(NeuralCore, p) },
   console: { title: 'Console',       span: 12, rows: 3, render: () => jsx(AoCard, { label: 'console', delay: 300, children: jsx(ConsoleCard, {}) }) },
   orbit:   { title: 'System orbit',  span: 12, rows: 4, render: () => jsx(OrbitCard, {}) },
-  agents:  { title: 'Agent activity', span: 6, rows: 4, render: () => jsx(AgentsCard, {}) },
-  releases:{ title: 'Release board',  span: 6, rows: 4, render: () => jsx(ReleasesCard, {}) }
+  agents:  { title: 'Agent activity', span: 6, rows: 4, render: () => jsx(AgentsCard, {}) }
 }
 
-const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'todos', 'brief', 'status', 'calendar', 'mail', 'telegram', 'voice', 'automation', 'memory', 'metrics', 'quotes', 'agents', 'releases', 'console']
+const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'todos', 'brief', 'status', 'calendar', 'mail', 'telegram', 'voice', 'automation', 'memory', 'metrics', 'agents', 'console']
 
 function defaultSizes() {
   const sizes = {}
