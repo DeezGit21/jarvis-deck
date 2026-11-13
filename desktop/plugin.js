@@ -357,6 +357,10 @@ html.ao-companion, html.ao-companion body, html.ao-companion #root { background:
 /* action rows (advisor): when the button group can't fit beside the text it
    wraps to its own right-aligned line instead of squeezing text to a sliver */
 .ao-row-actions { margin-left: auto; }
+/* advisor row text: guaranteed readable width — if the buttons can't fit
+   beside it they wrap below (flex-wrap on the row) instead of crushing the
+   alert text to a couple of words per line */
+.ao-row-text { flex: 1 1 0; min-width: 16rem; }
 @media (max-width: 899px) {
   /* hero: action ribbon first, telemetry wraps under it; hide desktop-only
      mode-number shortcuts so the row fits */
@@ -2581,6 +2585,26 @@ function TodosCard() {
     right: d && jsx('span', { className: 'font-mono text-xs text-(--ui-text-quaternary)', children: totalOpen + ' open' }),
     children: jsxs(Fragment, {
       children: [
+        jsx('div', {
+          className: 'mb-2 flex items-center gap-1.5',
+          children: [
+            jsx('input', {
+              value: txt,
+              onChange: e => setTxt(e.target.value),
+              onKeyDown: e => { if (e.key === 'Enter') add() },
+              placeholder: 'add task to board…',
+              disabled: busy,
+              className: 'min-w-0 flex-1 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) px-2.5 py-1.5 text-sm text-(--ui-text-primary) outline-none transition-colors placeholder:text-(--ui-text-quaternary) focus:border-(--ui-accent) disabled:opacity-50'
+            }),
+            jsx('button', {
+              onClick: () => { add() },
+              disabled: busy || !txt.trim(),
+              className: 'shrink-0 rounded-md border border-(--ui-stroke-secondary) px-2.5 py-1.5 font-mono text-[0.65rem] uppercase text-(--ui-text-secondary) transition-colors hover:border-(--ui-accent) hover:text-(--ui-accent) disabled:opacity-40',
+              children: busy ? '…' : 'add'
+            })
+          ]
+        }),
+        err && jsx('div', { className: 'mb-2 text-xs text-[#f85149]', children: err }),
         plannerOk && pl.focus && jsx('div', {
           className: 'mb-2 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) px-2.5 py-2 text-sm text-(--ui-text-primary)',
           children: jsxs('span', { className: 'flex items-baseline gap-2', children: [
@@ -2639,7 +2663,11 @@ function TodosCard() {
       : kind2 === 'restart' ? 'restart service ' + (t.title.match(/['\u2018\u2019]([^'\u2018\u2019]+)['\u2018\u2019]/)?.[1] || 'unknown')
       : t.title
     return jsxs('div', {
-            className: 'group ao-in flex items-baseline gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
+            className: 'group ao-in relative flex items-baseline gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover) ' +
+              // the ao-in fill-mode animation puts EVERY row in its own stacking
+              // context, so the menu's z-index can't escape its row — raise the
+              // open row above its siblings or later rows paint over the menu
+              (menuFor === t.id ? 'z-40' : ''),
             style: { animationDelay: 240 + i * 70 + 'ms' },
             onMouseEnter: () => HoverBus.set((t.title || '').toLowerCase()),
             onMouseLeave: () => HoverBus.clear(),
@@ -2693,26 +2721,6 @@ function TodosCard() {
             ]
           }, t.id)
           })}),
-        jsx('div', {
-          className: 'mt-2 flex items-center gap-1.5',
-          children: [
-            jsx('input', {
-              value: txt,
-              onChange: e => setTxt(e.target.value),
-              onKeyDown: e => { if (e.key === 'Enter') add() },
-              placeholder: 'add task to board…',
-              disabled: busy,
-              className: 'min-w-0 flex-1 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) px-2.5 py-1.5 text-sm text-(--ui-text-primary) outline-none transition-colors placeholder:text-(--ui-text-quaternary) focus:border-(--ui-accent) disabled:opacity-50'
-            }),
-            jsx('button', {
-              onClick: () => { add() },
-              disabled: busy || !txt.trim(),
-              className: 'shrink-0 rounded-md border border-(--ui-stroke-secondary) px-2.5 py-1.5 font-mono text-[0.65rem] uppercase text-(--ui-text-secondary) transition-colors hover:border-(--ui-accent) hover:text-(--ui-accent) disabled:opacity-40',
-              children: busy ? '…' : 'add'
-            })
-          ]
-        }),
-        err && jsx('div', { className: 'mt-1 text-xs text-[#f85149]', children: err }),
         p.data && pl.state !== 'ok' && pl.state !== 'no_key' && jsx('div', {
           className: 'mt-2 text-xs text-(--ui-text-tertiary)',
           children: 'Planner: ' + pl.state + ' — ' + (pl.detail || '')
@@ -2759,7 +2767,7 @@ function ActionRow({ a, busy, onDone, onKill }) {
     onMouseLeave: () => HoverBus.clear(),
     children: [
       jsx('span', { className: 'mt-0.5 shrink-0 rounded border px-1.5 py-0.5 font-mono text-[0.65rem] font-bold ' + tier.cls, children: tier.label }),
-      jsx('div', { className: 'min-w-0 flex-1', children: [
+      jsx('div', { className: 'ao-row-text', children: [
         jsx('span', { className: 'block text-sm leading-snug text-(--ui-text-primary) ' + (a.status && a.status !== 'open' ? 'line-through opacity-50' : ''), children: a.text }),
         cmdBusy && jsx('div', { className: 'ao-mini-term', children: lastReply || 'Running\u2026' })
       ] }),
