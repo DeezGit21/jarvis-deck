@@ -1188,6 +1188,29 @@ def brief_broadcast():
 
 # ---------------------------------------------------------------- jarvis console
 
+DECK_SESSION_FILE = CACHE / "deck-chat-session.txt"
+
+
+def _deck_session_id() -> str:
+    """The rolling deck conversation session — every /command (typed or voice)
+    resumes it so Jarvis remembers the chat's earlier turns."""
+    try:
+        return DECK_SESSION_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+@router.post("/command/reset")
+def command_reset():
+    """Start a new conversation: drop the rolling deck session."""
+    had = bool(_deck_session_id())
+    try:
+        DECK_SESSION_FILE.unlink()
+    except OSError:
+        pass
+    return {"ok": True, "cleared": had}
+
+
 @router.post("/command")
 def command(body: dict = Body(...)):
     """Run a natural-language command through the Hermes agent (full tool access).
@@ -1203,19 +1226,50 @@ def command(body: dict = Body(...)):
     fast = _memory_fastpath(query)
     if fast:
         return {"ok": True, "reply": fast["reply"], "date": _local_date()}
+    if query.lower() in ("/new", "/reset"):
+        # start a fresh conversation: drop the rolling deck session
+        try:
+            DECK_SESSION_FILE.unlink()
+        except OSError:
+            pass
+        return {"ok": True, "reply": "Fresh conversation, sir — history cleared.", "date": _local_date()}
     query = _memory_block(query)
+    sid = _deck_session_id()
+    argv = ["hermes", "chat", "-Q", "--query-file", "-"]
+    if sid:
+        # conversation mode: resume the rolling deck session so Jarvis remembers
+        # this chat's earlier turns (voice + typed both land here)
+        argv += ["--resume", sid]
     try:
-        p = subprocess.run(
-            ["hermes", "chat", "-Q", "--query-file", "-"],
-            input=query, capture_output=True, text=True, timeout=600,
-            creationflags=_NO_WINDOW,
-        )
+        p = subprocess.run(argv, input=query, capture_output=True, text=True, timeout=600,
+                           creationflags=_NO_WINDOW)
         rc, out, err = p.returncode, p.stdout, p.stderr
+        if rc != 0 and sid:
+            # stale/invalid session id — drop it and answer fresh, once
+            try:
+                DECK_SESSION_FILE.unlink()
+            except OSError:
+                pass
+            p = subprocess.run(["hermes", "chat", "-Q", "--query-file", "-"],
+                               input=query, capture_output=True, text=True, timeout=600,
+                               creationflags=_NO_WINDOW)
+            rc, out, err = p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         rc, out, err = 124, "", "command timed out after 600s"
     if rc != 0:
         raise HTTPException(status_code=502, detail=f"command failed: {(err or out).strip()[:300]}")
+    # hermes prints the trailing session_id line on STDERR (the reply is on
+    # stdout) — scan both, and strip it from the reply if it lands there
+    new_sid = ""
+    for ln in ((out or "") + "\n" + (err or "")).splitlines():
+        if ln.startswith("session_id:") and not new_sid:
+            new_sid = ln.split(":", 1)[1].strip()
     lines = [ln for ln in out.strip().splitlines() if not ln.startswith("session_id:")]
+    if new_sid:
+        try:
+            DECK_SESSION_FILE.write_text(new_sid, encoding="utf-8")
+        except OSError:
+            pass
     reply = "\n".join(lines).strip()
     if not reply:
         raise HTTPException(status_code=502, detail="command returned empty output")
