@@ -232,6 +232,8 @@ def _gws_run(args: list[str], config_dir: str, timeout: int = 60) -> tuple[int, 
 
 def _json_tail(out: str):
     """gws prints a 'Using keyring backend:' banner before the JSON body."""
+    if not out:
+        return None
     idx = out.find("{")
     if idx < 0:
         idx = out.find("[")
