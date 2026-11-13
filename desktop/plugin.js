@@ -2719,12 +2719,7 @@ const WS_Store = {
   _subs: [],
   subscribe(fn) { this._subs.push(fn); return () => { this._subs = this._subs.filter(f => f !== fn) } },
   _emit() { for (const f of this._subs) { try { f() } catch { /* a listener bug never kills the loop */ } } },
-  setScene(s) {
-    this.scene = s; this.selected = null
-    if (this._rebuild) { try { this._rebuild(s) } catch (e) { console.warn('[workshop] rebuild failed', e) } }
-    this._emit()
-  },
-  setExplosion(v) { this.explosion = v; this._emit() },
+  setScene(s) { this.scene = s; this.selected = null; this._emit() },
   setSelected(id) { this.selected = id; this._emit() },
   setLabels(b) { this.labels = !!b; this._emit() },
   setBusy(b) { this.busy = !!b; this._emit() }
@@ -3085,7 +3080,7 @@ function WorkshopTab() {
           jsx('span', { className: 'ao-label shrink-0', children: 'explode' }),
           jsx('input', {
             type: 'range', min: 0, max: 100, value: Math.round((WS_Store.explosion || 0) * 100),
-            onChange: e => WS_Store.setExplosion(Number(e.target.value) / 100),
+            onChange: e => { WS_Store.explosion = Number(e.target.value) / 100 },
             className: 'min-w-0 flex-1 accent-[#5cd6ff]',
             'aria-label': 'Explode view'
           }),
