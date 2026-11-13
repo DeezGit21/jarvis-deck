@@ -2607,7 +2607,10 @@ function TodosCard() {
     try {
       await REST('/todos/create', { method: 'POST', body: { title } })
       setTxt('')
+      // refetch() directly — invalidateQueries alone is a dead button on this
+      // sdk stub (the refetch never fires; the row sat until the 2-min poll)
       await qc.invalidateQueries({ queryKey: ['agentos', 'todos'] })
+      await q.refetch()
     } catch (e) {
       setErr(e && e.message ? String(e.message).slice(0, 160) : 'create failed')
     } finally {
@@ -2615,6 +2618,10 @@ function TodosCard() {
     }
   }
   const [doneId, setDoneId] = useState(null)
+  // ids completed this session — hidden optimistically so the row vanishes at
+  // the click even before the refetch lands (and they can't "come back" while
+  // the poll is in flight)
+  const [hiddenIds, setHiddenIds] = useState(() => new Set())
   const [menuFor, setMenuFor] = useState(null)
   useEffect(() => {
     if (!menuFor) return undefined
@@ -2640,7 +2647,12 @@ function TodosCard() {
     haptic('tap')
     try {
       await REST('/todos/complete', { method: 'POST', body: { id: t.id, title: t.title } })
+      // optimistic: the row vanishes AT the click — the server already dropped
+      // it, but invalidateQueries alone never refetched (sdk stub), so the
+      // row sat there until the 2-min poll. Read: refetch() explicitly.
+      setHiddenIds(prev => { const n = new Set(prev); n.add(t.id); return n })
       await qc.invalidateQueries({ queryKey: ['agentos', 'todos'] })
+      await q.refetch()
     } catch (e) {
       setErr(e && e.message ? String(e.message).slice(0, 160) : 'complete failed')
     } finally {
@@ -2667,7 +2679,8 @@ function TodosCard() {
     ...(pl.planner_tasks || []).map(r => ({ ...r, tag: 'planner' }))
   ] : []
   const habitKeys = plannerOk ? Object.keys(pl.habits || {}) : []
-  const totalOpen = (d ? d.total_open : 0) + plannerRows.filter(r => !r.done).length
+  const visibleTasks = d ? d.tasks.filter(t => !hiddenIds.has(t.id)) : []
+  const totalOpen = Math.max(0, (d ? d.total_open : 0) - hiddenIds.size) + plannerRows.filter(r => !r.done).length
   return jsx(AoCard, {
     label: 'today',
     delay: 240,
@@ -2735,8 +2748,8 @@ function TodosCard() {
         ) }),
         q.isLoading && jsx(Skel, { h: '.9rem' }),
         q.error && jsx('div', { className: 'mt-2 text-sm text-(--ui-text-secondary)', children: q.error.message }),
-        d && d.tasks.length === 0 && plannerRows.length === 0 && jsx('div', { className: 'py-2 text-sm text-(--ui-text-tertiary)', children: 'No open tasks.' }),
-        d && jsx('div', { className: 'space-y-1', children: d.tasks.map((t, i) => {
+        d && visibleTasks.length === 0 && plannerRows.length === 0 && jsx('div', { className: 'py-2 text-sm text-(--ui-text-tertiary)', children: 'No open tasks.' }),
+        d && jsx('div', { className: 'space-y-1', children: visibleTasks.map((t, i) => {
     const txt2 = (t.title || '').toLowerCase()
     // overflow menu actions (hover-revealed — keeps the resting row at 2 buttons)
     const extraActions = [
