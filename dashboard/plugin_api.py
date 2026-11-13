@@ -165,6 +165,26 @@ def metrics():
             "revenue_series": revenue_series, "revenue_series_dates": revenue_series_dates}
 
 
+# This week's individual leads — the metrics card counts them, this names them.
+LEADS_SQL = """
+SELECT id, name, COALESCE(phone, ''), COALESCE(email, ''), COALESCE(source, ''), status,
+       COALESCE(estimated_value, 0),
+       to_char(created_at AT TIME ZONE 'America/Phoenix', 'Dy DD Mon HH12:MI')
+FROM leads
+WHERE created_at >= date_trunc('week', now()) AND deleted_at IS NULL
+ORDER BY created_at DESC;
+"""
+
+
+@router.get("/metrics/leads")
+def metrics_leads():
+    rows = _psql(LEADS_SQL)
+    leads = [{"id": int(r[0]), "name": r[1], "phone": r[2], "email": r[3],
+              "source": r[4], "status": r[5], "value": float(r[6]), "created": r[7]}
+             for r in rows]
+    return {"date": _local_date(), "count": len(leads), "leads": leads}
+
+
 # ---------------------------------------------------------------- status
 
 
@@ -486,6 +506,23 @@ def brief_generate():
     path = CACHE / f"brief-{_local_date()}.md"
     path.write_text(brief, encoding="utf-8")
     return {"brief": brief, "date": _local_date(), "prompt_file": str(prompt_file)}
+
+
+@router.post("/brief/save")
+def brief_save(body: dict = Body(...)):
+    """Manual edits to today's brief — add/edit/remove items, then save back
+    over the generated file. The spoken-script cache for today is dropped so
+    'Run Daily Brief' re-reads the edited text."""
+    text = str(body.get("brief") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="brief text is empty")
+    CACHE.mkdir(parents=True, exist_ok=True)
+    path = CACHE / f"brief-{_local_date()}.md"
+    path.write_text(text, encoding="utf-8")
+    speech = CACHE / "brief-speech-latest.json"
+    if speech.exists():
+        speech.unlink()
+    return {"brief": text, "date": _local_date(), "saved": True}
 
 
 BROADCAST_MODEL = "gemini-2.5-flash"
