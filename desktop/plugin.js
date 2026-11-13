@@ -4739,6 +4739,30 @@ function AutomationCard() {
   const events = (d && d.events) || []
   const enabled = !!(d && d.enabled)
   const [openEv, setOpenEv] = useState(null)
+  // In-place status for DIAGNOSE & FIX / RESTART (Nielsen #1 — visibility of
+  // system status): the command runs through ConsoleStore (console card + orb
+  // show progress) but THIS card must show what's happening where you clicked.
+  const [evAct, setEvAct] = useState(null)
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (!evAct || evAct.state !== 'working') return
+    const t = setInterval(() => tick(x => x + 1), 1000)
+    return () => clearInterval(t)
+  }, [evAct && evAct.id, evAct && evAct.state])
+
+  async function runFix(ev, cmd, verb) {
+    if (evAct && evAct.state === 'working') return
+    if (ConsoleStore.busy) {
+      setEvAct({ id: ev.id, verb, state: 'error', note: 'another command is still running — watch the console', secs: 0, start: Date.now() })
+      return
+    }
+    const start = Date.now()
+    setEvAct({ id: ev.id, verb, state: 'working', start })
+    const ok = await ConsoleStore.send(cmd)
+    const last = ConsoleStore.msgs[ConsoleStore.msgs.length - 1]
+    const note = last && last.role === 'jarvis' ? last.text : (ok ? 'done' : 'command failed')
+    setEvAct({ id: ev.id, verb, state: ok ? 'done' : 'error', note: note.length > 110 ? note.slice(0, 109) + '\u2026' : note, secs: Math.max(1, Math.round((Date.now() - start) / 1000)), start })
+  }
 
   async function act(path, body, tag) {
     setBusy(tag)
@@ -4805,18 +4829,31 @@ function AutomationCard() {
             ] }),
             open && jsxs(Fragment, { children: [
               ev.detail && jsx('div', { className: 'mt-1.5 whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed text-(--ui-text-tertiary)', children: ev.detail }),
-              failed && jsxs('div', { className: 'mt-2 flex items-center gap-1.5', children: [
+              failed && (evAct && evAct.id === ev.id ? jsx('div', {
+                className: 'mt-2 cursor-pointer font-mono text-[10px] leading-relaxed',
+                style: { color: evAct.state === 'working' ? '#5cd6ff' : evAct.state === 'done' ? '#3fb950' : '#f5495b' },
+                onClick: e => { e.stopPropagation(); setEvAct(null) },
+                title: 'Click to dismiss \u2014 full detail in the console',
+                children: evAct.state === 'working'
+                  ? jsxs(Fragment, { children: [
+                      jsx('span', { className: 'ao-led', style: { marginRight: 6, verticalAlign: 'middle' } }),
+                      'JARVIS is ' + evAct.verb + ' the ' + ev.service + ' service\u2026 ' + Math.round((Date.now() - evAct.start) / 1000) + 's'
+                    ] })
+                  : (evAct.state === 'done'
+                      ? '\u2713 ' + evAct.verb.replace(/ing$/, 'ed') + ' in ' + evAct.secs + 's \u2014 ' + evAct.note
+                      : '\u2715 ' + evAct.note)
+              }) : jsxs('div', { className: 'mt-2 flex items-center gap-1.5', children: [
                 jsx('button', {
                   type: 'button', className: 'ao-btn text-[10px]',
-                  onClick: e => { e.stopPropagation(); Chimes.play('up'); ConsoleStore.send('diagnose why the ' + ev.service + ' service is down \u2014 find the root cause, fix it, confirm it\u2019s healthy again, and report back what was wrong') },
-                  children: '\uD83D\uDD27 DIAGNOSE & FIX'
+                  onClick: e => { e.stopPropagation(); Chimes.play('up'); runFix(ev, 'diagnose why the ' + ev.service + ' service is down \u2014 find the root cause, fix it, confirm it\u2019s healthy again, and report back what was wrong', 'diagnosing') },
+                  children: '🔧 DIAGNOSE & FIX'
                 }),
                 jsx('button', {
                   type: 'button', className: 'ao-btn text-[10px]',
-                  onClick: e => { e.stopPropagation(); Chimes.play('up'); ConsoleStore.send('restart the ' + ev.service + ' service and confirm it comes back healthy') },
-                  children: '\uD83D\uDD04 RESTART'
+                  onClick: e => { e.stopPropagation(); Chimes.play('up'); runFix(ev, 'restart the ' + ev.service + ' service and confirm it comes back healthy', 'restarting') },
+                  children: '🔄 RESTART'
                 })
-              ] })
+              ] }))
             ] })
           ] }, ev.id)
       }) : jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'no events yet — scanner runs every 5 min' }) })
