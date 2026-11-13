@@ -467,11 +467,15 @@ import sqlite3, json
 c = sqlite3.connect('/home/d/.hermes/state.db')
 rows = c.execute('''
 select s.id, coalesce(s.title,'(untitled)'), s.last_activity_at, s.message_count,
+       coalesce(s.chat_type,'dm'), coalesce(s.chat_id,''),
+       (select min(m.timestamp) from messages m where m.session_id = s.id),
        (select m.content from messages m where m.session_id = s.id and m.role = 'user'
         and m.active = 1 and m.display_kind is null order by m.timestamp desc limit 1)
 from sessions s where s.source = 'telegram' and s.archived = 0 and s.hidden = 0
 order by s.last_activity_at desc limit %d''').fetchall()
-print(json.dumps([{'id': r[0], 'title': r[1], 'ts': r[2], 'n': r[3], 'preview': (r[4] or '')[:160]} for r in rows]))
+print(json.dumps([{'id': r[0], 'title': r[1], 'ts': r[2], 'n': r[3],
+       'chat_type': r[4], 'chat_id': r[5], 'first_ts': r[6],
+       'preview': (r[7] or '')[:160]} for r in rows]))
 """
 
 
