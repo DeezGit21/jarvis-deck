@@ -4131,7 +4131,7 @@ function MemoryGalaxy3D() {
     if (!wrap || !model.length) return undefined
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 120)
-    camera.position.set(0, 0.9, 4.6)
+    camera.position.set(0, 0.8, 3.1)
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
     renderer.domElement.style.cssText = 'display:block;touch-action:none;cursor:grab'
@@ -4141,13 +4141,13 @@ function MemoryGalaxy3D() {
     controls.dampingFactor = 0.06
     controls.enablePan = false
     controls.rotateSpeed = 0.55
-    controls.minDistance = 1.6
-    controls.maxDistance = 12
+    controls.minDistance = 1.3
+    controls.maxDistance = 6.5
     if (reduced) controls.autoRotate = false
     else { controls.autoRotate = true; controls.autoRotateSpeed = 0.35 }
 
-    // node point cloud (buildGalaxy coords are ~unit sphere; scale up x7)
-    const S = 7
+    // node point cloud (buildGalaxy coords are ~unit sphere; scale up x5.2)
+    const S = 5.2
     const N = model.length
     const pos = new Float32Array(N * 3)
     const col = new Float32Array(N * 3)
@@ -4184,7 +4184,7 @@ function MemoryGalaxy3D() {
 
     // orb-state reactive accent light + faint reference sphere wireframe
     const wire = new THREE.Mesh(
-      new THREE.SphereGeometry(3.4, 24, 16),
+      new THREE.SphereGeometry(2.6, 24, 16),
       new THREE.MeshBasicMaterial({ color: 0x5cd6ff, wireframe: true, transparent: true, opacity: 0.045 }))
     scene.add(wire)
 
@@ -4230,7 +4230,7 @@ function MemoryGalaxy3D() {
       const f = explodeRef.current
       const arr = geo.attributes.position.array
       for (let i = 0; i < N; i++) {
-        tmp.set(basePos[i * 3] + dirs[i].x * f * 5.2, basePos[i * 3 + 1] + dirs[i].y * f * 3.4, basePos[i * 3 + 2] + dirs[i].z * f * 5.2)
+        tmp.set(basePos[i * 3] + dirs[i].x * f * 4.0, basePos[i * 3 + 1] + dirs[i].y * f * 2.6, basePos[i * 3 + 2] + dirs[i].z * f * 4.0)
         arr[i * 3] += (tmp.x - arr[i * 3]) * 0.09
         arr[i * 3 + 1] += (tmp.y - arr[i * 3 + 1]) * 0.09
         arr[i * 3 + 2] += (tmp.z - arr[i * 3 + 2]) * 0.09
