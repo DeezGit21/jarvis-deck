@@ -1660,6 +1660,26 @@ function BriefCard() {
   }
 
   const brief = briefQ.data && briefQ.data.brief
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saveState, setSaveState] = useState(null) // null | 'saving' | 'saved' | error string
+
+  function startEdit() {
+    setDraft(brief || '')
+    setSaveState(null)
+    setEditing(true)
+  }
+  async function saveEdit() {
+    setSaveState('saving')
+    try {
+      await REST('/brief/save', { method: 'POST', body: { brief: draft }, timeoutMs: 30000 })
+      setSaveState('saved')
+      setEditing(false)
+      qc.invalidateQueries({ queryKey: ['agentos', 'brief'] })
+    } catch (e) {
+      setSaveState(String((e && e.message) || e).slice(0, 200))
+    }
+  }
 
   return jsx(AoCard, {
     label: 'daily brief',
@@ -1676,6 +1696,12 @@ function BriefCard() {
         className: 'text-xs text-(--ui-accent)',
         onClick: generate,
         children: genState === 'running' ? 'Generating…' : brief ? 'Regenerate' : 'Generate'
+      }),
+      !editing && brief && jsx('button', {
+        type: 'button',
+        className: 'text-xs text-(--ui-accent)',
+        onClick: startEdit,
+        children: 'Edit'
       }),
       speakingNow && jsx('button', {
         type: 'button',
@@ -1701,7 +1727,23 @@ function BriefCard() {
           brief ? 'JARVIS is writing the spoken script…' : 'Generating the brief, then JARVIS reads it aloud…'
         ] }),
         typeof runState === 'string' && jsxs('div', { className: 'mt-2 text-xs text-[#f85149]', children: ['Brief run failed: ', runState] }),
-        brief && jsx(FadeIn, {
+        editing && jsxs('div', { className: 'mt-2', children: [
+          jsx('textarea', {
+            value: draft,
+            onChange: e => setDraft(e.target.value),
+            rows: 14,
+            spellCheck: false,
+            className: 'w-full rounded-lg border border-(--ui-accent)/40 bg-[rgba(6,10,16,.6)] p-3 font-mono text-[0.78rem] leading-relaxed text-(--ui-text-primary) outline-none focus:border-(--ui-accent)',
+            placeholder: 'Edit the brief markdown — add, change or delete items, then save'
+          }),
+          jsxs('div', { className: 'mt-2 flex items-center gap-2', children: [
+            jsx('button', { type: 'button', className: 'ao-btn', onClick: saveEdit, disabled: saveState === 'saving' || !draft.trim(), children: saveState === 'saving' ? 'saving…' : 'SAVE' }),
+            jsx('button', { type: 'button', className: 'ao-btn', onClick: () => { setEditing(false); setSaveState(null) }, children: 'CANCEL' }),
+            typeof saveState === 'string' && jsx('span', { className: 'text-xs text-[#f85149]', children: saveState }),
+            saveState === 'saved' && jsx('span', { className: 'text-xs text-[#3fb950]', children: 'saved' })
+          ] })
+        ] }),
+        !editing && brief && jsx(FadeIn, {
           text: brief,
           className: 'mt-2 whitespace-pre-wrap text-[0.8125rem] leading-relaxed text-(--ui-text-secondary)'
         }),
@@ -1742,6 +1784,18 @@ function MetricsCard() {
   const d = q.data
   const byStatus = (d && d.jobs_by_status) || []
   const maxCount = Math.max(1, ...byStatus.map(s => s.count))
+  const [leadsOpen, setLeadsOpen] = useState(false)
+  const leadsQ = useQuery({
+    queryKey: ['agentos', 'leads'],
+    queryFn: () => REST('/metrics/leads'),
+    enabled: false
+  })
+  const leads = (leadsQ.data && leadsQ.data.leads) || []
+  function toggleLeads() {
+    Chimes.play('up')
+    if (!leadsOpen) leadsQ.refetch()
+    setLeadsOpen(!leadsOpen)
+  }
   return jsx(AoCard, {
     label: 'business metrics',
     delay: 120,
@@ -1761,7 +1815,11 @@ function MetricsCard() {
         d && jsxs(Fragment, {
           children: [
             jsxs('div', { className: 'grid grid-cols-2 gap-x-4 gap-y-4', children: [
-              jsxs('div', { children: [jsx('div', { className: 'ao-label mb-0.5', children: 'leads this week' }),
+              jsxs('div', {
+                className: 'cursor-pointer rounded-md -mx-1 px-1 py-0.5 transition-colors hover:bg-[rgba(92,214,255,.06)]',
+                onClick: toggleLeads,
+                title: 'Show this week\u2019s leads',
+                children: [jsx('div', { className: 'ao-label mb-0.5', children: 'leads this week' + (leadsOpen ? ' \u25BE' : ' \u25B8') }),
                 jsx('div', { className: 'ao-num', children: jsx(AnimNum, { value: d.leads_week }) })] }),
               jsxs('div', { children: [jsx('div', { className: 'ao-label mb-0.5', children: 'jobs this week' }),
                 jsx('div', { className: 'ao-num', children: jsx(AnimNum, { value: d.jobs_week }) })] }),
@@ -1785,7 +1843,33 @@ function MetricsCard() {
                 ] }),
                 jsx('div', { className: 'ao-bar', children: jsx('i', { style: { width: (s.count / maxCount * 100).toFixed(1) + '%' } }) })
               ] }, s.status)
-            ) })
+            ) }),
+            leadsOpen && jsxs('div', { className: 'mt-4 rounded-lg border border-(--ui-stroke-secondary) bg-[rgba(6,10,16,.45)] p-2.5', children: [
+              jsxs('div', { className: 'mb-2 flex items-center justify-between', children: [
+                jsx('div', { className: 'ao-label', children: 'this week\u2019s leads' }),
+                jsx('button', {
+                  type: 'button', className: 'ao-btn text-[10px]',
+                  onClick: () => { Chimes.play('up'); ConsoleStore.send('summarize this week\u2019s leads from the hub: who they are, where they came from, and which are worth calling first') },
+                  children: '\uD83E\uDD16 ASK JARVIS'
+                })
+              ] }),
+              leadsQ.isFetching && jsx(Skel, { h: '4rem', w: '100%' }),
+              leadsQ.error && jsx('div', { className: 'text-xs text-(--ui-text-tertiary)', children: 'couldn\u2019t load lead details' }),
+              !leadsQ.isFetching && !leadsQ.error && leads.length === 0 && jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'no leads logged this week' }),
+              !leadsQ.isFetching && leads.map((L, i) => jsxs('div', { className: 'ao-in mb-1.5 rounded-md border border-(--ui-stroke-secondary) px-2.5 py-1.5', style: { animationDelay: i * 40 + 'ms' }, children: [
+                jsxs('div', { className: 'flex items-baseline gap-2 text-xs', children: [
+                  jsx('span', { className: 'font-semibold truncate text-(--ui-text-primary)', children: L.name }),
+                  jsx('span', { className: 'shrink-0 rounded px-1 py-px font-mono text-[9px] uppercase tracking-wide', style: { background: 'rgba(211,153,34,.12)', color: '#d29922' }, children: L.status || 'new' }),
+                  jsx('span', { className: 'ml-auto shrink-0 font-mono text-[10px] text-(--ui-text-quaternary)', children: L.created })
+                ] }),
+                jsxs('div', { className: 'mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[10px] text-(--ui-text-tertiary)', children: [
+                  L.phone && jsx('span', { children: L.phone }),
+                  L.email && jsx('span', { children: L.email }),
+                  L.source && jsx('span', { children: 'via ' + L.source }),
+                  L.value > 0 && jsx('span', { className: 'text-(--ui-accent)', children: fmtMoney(L.value) + ' est.' })
+                ] })
+              ] }, L.id))
+            ] })
           ]
         })
       ]
@@ -3974,6 +4058,7 @@ function AutomationCard() {
   const pending = (d && d.pending) || []
   const events = (d && d.events) || []
   const enabled = !!(d && d.enabled)
+  const [openEv, setOpenEv] = useState(null)
 
   async function act(path, body, tag) {
     setBusy(tag)
@@ -4025,14 +4110,36 @@ function AutomationCard() {
         ]
       }, p.id)),
       jsx('div', { className: 'ao-label', children: 'activity' }),
-      jsx('div', { className: 'space-y-1.5', children: events.length ? events.slice(0, 8).map((ev, i) =>
-        jsxs('div', { className: 'flex items-center gap-2 min-w-0 text-xs ao-in', style: { animationDelay: i * 40 + 'ms' }, children: [
-          jsx('span', { className: 'shrink-0', style: { color: (REM_KIND[ev.kind] || {}).color || '#64748b' }, children: (REM_KIND[ev.kind] || {}).icon || '•' }),
-          jsx('span', { className: 'truncate text-(--ui-text-secondary)', title: ev.detail, children: ev.service }),
-          jsx('span', { className: 'truncate font-mono text-[10px] text-(--ui-text-quaternary)', children: ev.kind.replace('_', ' ') }),
-          jsx('span', { className: 'ml-auto shrink-0 font-mono text-[10px] text-(--ui-text-quaternary)', children: fmtAgo(ev.at) })
-        ] }, ev.id)
-      ) : jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'no events yet — scanner runs every 5 min' }) })
+      jsx('div', { className: 'space-y-1.5', children: events.length ? events.slice(0, 8).map((ev, i) => {
+        const failed = ev.kind === 'auto_failed' || ev.kind === 'approved_failed'
+        const open = openEv === ev.id
+        return jsxs('div', { className: 'ao-in rounded-md transition-colors ' + (open ? 'border border-(--ui-stroke-secondary) bg-[rgba(6,10,16,.45)] px-2 py-1.5' : 'cursor-pointer px-0.5 py-0.5 hover:bg-[rgba(92,214,255,.05)]'), style: { animationDelay: i * 40 + 'ms' },
+          onClick: () => { if (!open) Chimes.play('tap'); setOpenEv(open ? null : ev.id) },
+          title: open ? '' : 'Click for details',
+          children: [
+            jsxs('div', { className: 'flex items-center gap-2 min-w-0 text-xs', children: [
+              jsx('span', { className: 'shrink-0', style: { color: (REM_KIND[ev.kind] || {}).color || '#64748b' }, children: (REM_KIND[ev.kind] || {}).icon || '•' }),
+              jsx('span', { className: 'truncate text-(--ui-text-secondary)', children: ev.service }),
+              jsx('span', { className: 'truncate font-mono text-[10px] text-(--ui-text-quaternary)', children: ev.kind.replace('_', ' ') }),
+              jsx('span', { className: 'ml-auto shrink-0 font-mono text-[10px] text-(--ui-text-quaternary)', children: fmtAgo(ev.at) })
+            ] }),
+            open && jsxs(Fragment, { children: [
+              ev.detail && jsx('div', { className: 'mt-1.5 whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed text-(--ui-text-tertiary)', children: ev.detail }),
+              failed && jsxs('div', { className: 'mt-2 flex items-center gap-1.5', children: [
+                jsx('button', {
+                  type: 'button', className: 'ao-btn text-[10px]',
+                  onClick: e => { e.stopPropagation(); Chimes.play('up'); ConsoleStore.send('diagnose why the ' + ev.service + ' service is down \u2014 find the root cause, fix it, confirm it\u2019s healthy again, and report back what was wrong') },
+                  children: '\uD83D\uDD27 DIAGNOSE & FIX'
+                }),
+                jsx('button', {
+                  type: 'button', className: 'ao-btn text-[10px]',
+                  onClick: e => { e.stopPropagation(); Chimes.play('up'); ConsoleStore.send('restart the ' + ev.service + ' service and confirm it comes back healthy') },
+                  children: '\uD83D\uDD04 RESTART'
+                })
+              ] })
+            ] })
+          ] }, ev.id)
+      }) : jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'no events yet — scanner runs every 5 min' }) })
     ] })
   })
 }
@@ -4651,6 +4758,19 @@ function BriefingMode() {
   const [busy, setBusy] = useState(false)
   const d = q.data
   const text = (d && (d.text || d.brief || '')) || ''
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saveState, setSaveState] = useState(null) // null | 'saving' | 'saved' | error string
+  function startEdit() { setDraft(text); setSaveState(null); setEditing(true) }
+  async function saveEdit() {
+    setSaveState('saving')
+    try {
+      await REST('/brief/save', { method: 'POST', body: { brief: draft }, timeoutMs: 30000 })
+      setSaveState('saved')
+      setEditing(false)
+      await q.refetch()
+    } catch (e) { setSaveState(String((e && e.message) || e).slice(0, 200)) }
+  }
   async function generate() {
     setBusy(true)
     try { await REST('/brief/generate', { method: 'POST' }); await q.refetch() } catch (e) { /* ignore */ }
@@ -4663,11 +4783,27 @@ function BriefingMode() {
       jsxs('div', { className: 'flex items-center gap-2', children: [
         jsx('button', { type: 'button', className: 'ao-btn', onClick: generate, disabled: busy, children: busy ? 'generating…' : 'GENERATE' }),
         text && jsx('button', { type: 'button', className: 'ao-btn', onClick: () => Tts.speak(text), children: 'SPEAK' }),
+        text && !editing && jsx('button', { type: 'button', className: 'ao-btn', onClick: startEdit, children: 'EDIT' }),
         text && jsx('button', { type: 'button', className: 'ao-btn border-[#f5495b]/50 text-[#f5495b]', onClick: stopJarvisSpeech, children: 'STOP' }),
         jsx('span', { className: 'ml-auto font-mono text-[0.6rem] text-(--ui-text-quaternary)', children: d && d.date ? d.date : '' })
       ] }),
       q.isLoading && jsx(Skel, { h: '12rem' }),
-      text ? jsx('div', {
+      editing ? jsxs(Fragment, { children: [
+        jsx('textarea', {
+          value: draft,
+          onChange: e => setDraft(e.target.value),
+          rows: 20,
+          spellCheck: false,
+          className: 'w-full flex-1 rounded-lg border border-(--ui-accent)/40 bg-[rgba(6,10,16,.6)] p-4 font-mono text-[0.85rem] leading-relaxed text-(--ui-text-primary) outline-none focus:border-(--ui-accent)',
+          placeholder: 'Edit the brief markdown — add, change or delete items, then save'
+        }),
+        jsxs('div', { className: 'flex items-center gap-2', children: [
+          jsx('button', { type: 'button', className: 'ao-btn', onClick: saveEdit, disabled: saveState === 'saving' || !draft.trim(), children: saveState === 'saving' ? 'saving…' : 'SAVE' }),
+          jsx('button', { type: 'button', className: 'ao-btn', onClick: () => { setEditing(false); setSaveState(null) }, children: 'CANCEL' }),
+          typeof saveState === 'string' && jsx('span', { className: 'text-xs text-[#f85149]', children: saveState }),
+          saveState === 'saved' && jsx('span', { className: 'text-xs text-[#3fb950]', children: 'saved' })
+        ] })
+      ] }) : text ? jsx('div', {
         className: 'whitespace-pre-wrap font-mono text-[0.92rem] leading-relaxed text-(--ui-text-secondary)',
         children: text
       }) : !q.isLoading && jsx('div', { className: 'text-sm text-(--ui-text-quaternary)', children: 'No brief for today yet. Hit GENERATE.' })
