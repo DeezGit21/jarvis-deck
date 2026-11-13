@@ -757,7 +757,7 @@ const ConsoleStore = {
     this.current = query
     this.since = Date.now()
     this.setBusy(true)
-    Tts.ack()
+    Tts.ack(ackLineFor(query))
     OrbBus.set(query.startsWith('/') ? 'working' : 'thinking')
     try {
       const r = await REST('/command', { method: 'POST', body: { query } })
@@ -778,7 +778,51 @@ const ConsoleStore = {
 }
 
 // Rotating near-instant acknowledgements (backend pre-warms these as edge-tts).
-const TTS_ACK_LINES = ['Generating brief now, sir', 'Right away, sir', 'On it, sir', 'At once, sir', 'Working on it now, sir']
+const TTS_ACK_LINES = ['Right away, sir', 'On it, sir', 'At once, sir', 'Working on it now, sir']
+
+// Contextual spoken ack: JARVIS answers WHAT he was just asked to do, not a
+// canned line for every click. Returns undefined → caller falls back to the
+// rotating generics. Kept regex-first so every ConsoleStore.send call site
+// (advisor rows, automation events, galaxy actions, spotlight) gets it free.
+function ackLineFor(query) {
+  const q = String(query || '').toLowerCase()
+  const cap = (s, n) => { s = String(s || '').trim(); return s.length > n ? s.slice(0, n - 1) + '\u2026' : s }
+  let mm
+  if (/(^|\s)\/?brief\b|daily brief/.test(q)) return 'Generating brief now, sir'
+  if ((mm = q.match(/restart (?:the )?(?:service )?(.+?)(?:\s+service\b|\s+and\b|\u2014|$|\?)/))) {
+    const svc = cap(mm[1], 40)
+    return svc ? 'Restarting ' + svc + ' now, sir' : 'Restarting it now, sir'
+  }
+  if ((mm = q.match(/diagnose(?: why)?(?: the)? (.+?)(?:\s+service\b|\s+is down|$)/))) {
+    const svc = mm[1] ? cap(mm[1], 40) : ''
+    return svc ? 'Digging into ' + svc + ' for you, sir' : 'Running diagnostics now, sir'
+  }
+  if ((mm = q.match(/voice had a (.+?) with ([\d\s()+-]{7,25})/))) {
+    const who = cap(mm[2].trim(), 24)
+    if (mm[1].includes('voicem')) return 'Pulling that voicemail for you, sir'
+    if (mm[1].includes('missed')) return 'Checking that missed call from ' + who + ', sir'
+    return 'Checking that text from ' + who + ', sir'
+  }
+  if ((mm = q.match(/unread email "([^"]+)" from (.+?) in my/))) {
+    const from = cap(mm[2].split('<')[0].trim(), 30)
+    return 'Opening the message from ' + from + ', sir'
+  }
+  if ((mm = q.match(/telegram conversation "([^"]+)"/))) return 'Reading the ' + cap(mm[1], 40) + ' thread, sir'
+  if ((mm = q.match(/"(.+)" event/))) return 'Pulling up ' + cap(mm[1], 40) + ', sir'
+  if ((mm = q.match(/analyze ([a-z0-9.\-]+)/))) return 'Pulling the chart on ' + mm[1].toUpperCase() + ', sir'
+  if ((mm = q.match(/news and outlook for ([a-z0-9.\-]+)/))) return 'Checking the wires on ' + mm[1].toUpperCase() + ', sir'
+  if (/\bdelegate\b/.test(q)) return 'Dispatching that to the team, sir'
+  if (/\bremember\b/.test(q)) return 'Committing that to memory, sir'
+  if (/\bforget\b/.test(q)) return 'Striking that from memory, sir'
+  if (/\btriage\b|\binbox\b|\bmail\b/.test(q)) return 'Sorting your inbox, sir'
+  if (/\bcalendar\b/.test(q)) return 'Pulling up your calendar, sir'
+  if (/\bjobs\b|\bhub\b/.test(q)) return 'Pulling the job files, sir'
+  if (/\bleads\b/.test(q)) return "Going through this week's leads, sir"
+  if (/\btodo\b|\btasks\b/.test(q)) return 'Reviewing your list, sir'
+  if (/^\/?mode\b/.test(q)) return 'Switching views, sir'
+  if (/^\/?diag\b/.test(q)) return 'Running diagnostics now, sir'
+  return undefined
+}
 
 // Cap any spoken text at ~95 words: Fish synthesis wait scales with length
 // (~40s for 150 words, ~11s for 85). Trim at a sentence boundary so the cap
