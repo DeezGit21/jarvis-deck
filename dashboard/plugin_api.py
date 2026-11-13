@@ -343,6 +343,7 @@ def _fetch_calendar_account(config_dir: str) -> tuple[bool, str, list[dict]]:
             parsed = _parse_agenda([e])
             if parsed:
                 row = parsed[0]
+                row["id"] = str(e.get("id") or "")
                 row["calendar"] = str(cal.get("summary") or cid)
                 rows.append(row)
     return True, last_err, rows
@@ -370,6 +371,100 @@ def calendar_agenda():
 @router.get("/mail/inbox")
 def mail_inbox():
     return _cached_json("gws-mail.json", ttl=180, refetch=lambda: _fetch_gws_pair("mail"))
+
+
+@router.post("/calendar/add")
+def calendar_add(body: dict = Body(...)):
+    """Create a calendar event on one account's primary calendar, then verify
+    by reading it back. Body: {account, title, start (ISO or HH:MM today/tomorrow),
+    duration_min}. Returns the created event + verification."""
+    account = str(body.get("account") or "").strip().lower()
+    title = str(body.get("title") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title is required")
+    duration = int(body.get("duration_min") or 45)
+    accounts = _gws_accounts()
+    target = next((a for a in accounts if a["name"].lower() == account), None)
+    if target is None:
+        raise HTTPException(status_code=400, detail=f"unknown account '{account}' — have: {[a['name'] for a in accounts]}")
+
+    # start: full ISO from the UI, or HH:MM interpreted on today/tomorrow local
+    start_raw = str(body.get("start") or "").strip()
+    day = str(body.get("day") or "today").strip().lower()  # today | tomorrow
+    tznow = _dt.datetime.now(AGENTOS_TZ)
+    if start_raw and "T" in start_raw:
+        start_dt = _dt.datetime.fromisoformat(start_raw)
+    else:
+        try:
+            hh, mm = (start_raw.split(":") + ["0"])[:2] if ":" in start_raw else (str(tznow.hour), "0")
+            cand = tznow.replace(hour=int(hh) % 24, minute=int(mm), second=0, microsecond=0)
+        except ValueError:
+            cand = (tznow + _dt.timedelta(minutes=30)).replace(second=0, microsecond=0)
+        if cand < tznow and day != "tomorrow":
+            cand += _dt.timedelta(days=1)  # time already passed today — push to same time tomorrow
+        if day == "tomorrow":
+            cand += _dt.timedelta(days=1)
+        start_dt = cand
+    end_dt = start_dt + _dt.timedelta(minutes=duration)
+
+    event = {
+        "summary": title,
+        "start": {"dateTime": start_dt.isoformat(timespec="seconds")},
+        "end": {"dateTime": end_dt.isoformat(timespec="seconds")},
+    }
+    params = {"calendarId": "primary", "sendUpdates": "none"}
+    rc, out, err = _gws_run(["calendar", "events", "insert", "--format", "json",
+                             "--params", json.dumps(params), "--json", json.dumps(event)],
+                            target["config_dir"], timeout=90)
+    if rc != 0:
+        raise HTTPException(status_code=502, detail=f"calendar insert failed: {(err or out)[:300]}")
+    created = _json_tail(out) or {}
+
+    # read-back verification: fetch the event by id
+    ev_id = str(created.get("id") or "")
+    verified = False
+    if ev_id:
+        rc2, out2, err2 = _gws_run(["calendar", "events", "get", "--format", "json",
+                                    "--params", json.dumps({"calendarId": "primary", "eventId": ev_id})],
+                                   target["config_dir"], timeout=60)
+        verified = rc2 == 0 and bool(_json_tail(out2))
+    # drop the agenda cache so the new event shows on next poll
+    agenda_cache = CACHE / "gws-agenda.json"
+    if agenda_cache.exists():
+        try:
+            agenda_cache.unlink()
+        except OSError:
+            pass
+    return {"ok": True, "account": target["name"], "id": ev_id,
+            "summary": created.get("summary") or title,
+            "start": created.get("start", {}).get("dateTime") or start_dt.isoformat(timespec="seconds"),
+            "end": created.get("end", {}).get("dateTime") or end_dt.isoformat(timespec="seconds"),
+            "verified": verified}
+
+
+@router.delete("/calendar/event")
+def calendar_delete(body: dict = Body(...)):
+    """Delete one event by id (read-back via delete response)."""
+    account = str(body.get("account") or "").strip().lower()
+    ev_id = str(body.get("id") or "").strip()
+    if not ev_id:
+        raise HTTPException(status_code=400, detail="id is required")
+    accounts = _gws_accounts()
+    target = next((a for a in accounts if a["name"].lower() == account), None)
+    if target is None:
+        raise HTTPException(status_code=400, detail=f"unknown account '{account}'")
+    params = {"calendarId": "primary", "eventId": ev_id}
+    rc, out, err = _gws_run(["calendar", "events", "delete", "--params", json.dumps(params)],
+                            target["config_dir"], timeout=60)
+    agenda_cache = CACHE / "gws-agenda.json"
+    if agenda_cache.exists():
+        try:
+            agenda_cache.unlink()
+        except OSError:
+            pass
+    if rc != 0:
+        raise HTTPException(status_code=502, detail=f"calendar delete failed: {(err or out)[:300]}")
+    return {"ok": True, "account": target["name"], "id": ev_id}
 
 
 # ---------------------------------------------------------------- status
