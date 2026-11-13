@@ -4081,230 +4081,6 @@ function GalaxyNodeActions({ node, onClose }) {
 // three.js renderer for the same buildGalaxy model the 2D canvas uses: real
 // depth, per-node point sprites, cluster explode (slider spreads every cluster
 // outward from its anchor) and the same click -> GalaxyNodeActions flow.
-// Selected from Settings > appearance ("memory galaxy renderer").
-
-const Galaxy3DVert = `precision highp float;
-attribute float aSize;
-attribute vec3 aColor;
-uniform float uTime;
-uniform float uPixelRatio;
-varying vec3 vColor;
-varying float vTwinkle;
-void main() {
-  vColor = aColor;
-  vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  float tw = 0.75 + 0.25 * sin(uTime * 1.7 + position.x * 4.1 + position.y * 3.3);
-  vTwinkle = tw;
-  gl_PointSize = aSize * uPixelRatio * (2.6 / max(-mv.z, 0.6)) * (0.85 + 0.3 * tw);
-  gl_Position = projectionMatrix * mv;
-}`
-const Galaxy3DFrag = `precision highp float;
-varying vec3 vColor;
-varying float vTwinkle;
-void main() {
-  vec2 c = gl_PointCoord - 0.5;
-  float d = length(c);
-  if (d > 0.5) discard;
-  float core = smoothstep(0.5, 0.06, d);
-  float glow = smoothstep(0.5, 0.0, d) * 0.35;
-  float a = core + glow;
-  vec3 col = mix(vColor, vec3(1.0), core * 0.55 * vTwinkle);
-  gl_FragColor = vec4(col * a, a);
-}`
-
-function MemoryGalaxy3D() {
-  const q = useQuery({ queryKey: ['agentos', 'memory'], queryFn: () => REST('/memory'), refetchInterval: 120000 })
-  const nodes = (q.data && q.data.nodes) || []
-  const nowSec = Math.floor(Date.now() / 1000)
-  const model = useMemo(() => buildGalaxy(nodes, nowSec), [nodes]) // eslint-disable-line
-  const wrapRef = useRef(null)
-  const [sel, setSel] = useState(null)
-  const [explode, setExplode] = useState(0)
-  const [reduced] = useState(() => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches)
-  const selRef = useRef(null)
-  selRef.current = sel
-  const explodeRef = useRef(0)
-  explodeRef.current = explode
-
-  useEffect(() => {
-    const wrap = wrapRef.current
-    if (!wrap || !model.length) return undefined
-    const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 120)
-    camera.position.set(0, 0.8, 3.1)
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
-    renderer.domElement.style.cssText = 'display:block;touch-action:none;cursor:grab'
-    wrap.appendChild(renderer.domElement)
-    const controls = new OrbitControls(camera, renderer.domElement)
-    controls.enableDamping = true
-    controls.dampingFactor = 0.06
-    controls.enablePan = false
-    controls.rotateSpeed = 0.55
-    controls.minDistance = 1.3
-    controls.maxDistance = 6.5
-    if (reduced) controls.autoRotate = false
-    else { controls.autoRotate = true; controls.autoRotateSpeed = 0.35 }
-
-    // node point cloud (buildGalaxy coords are ~unit sphere; scale up x5.2)
-    const S = 5.2
-    const N = model.length
-    const pos = new Float32Array(N * 3)
-    const col = new Float32Array(N * 3)
-    const siz = new Float32Array(N)
-    const accent = cssColorToRgb(getComputedStyle(wrap).getPropertyValue('--ui-accent').trim()) || [0.36, 0.84, 1]
-    model.forEach((m, i) => {
-      pos[i * 3] = m.pos[0] * S; pos[i * 3 + 1] = m.pos[1] * S; pos[i * 3 + 2] = m.pos[2] * S
-      const rgb = m.n.color_key === 'task_open' ? accent : (GALAXY_RGB[m.n.color_key] || [160, 170, 185])
-      col[i * 3] = rgb[0] / 255; col[i * 3 + 1] = rgb[1] / 255; col[i * 3 + 2] = rgb[2] / 255
-      siz[i] = 4 + m.size * 2.2
-    })
-    const geo = new THREE.BufferGeometry()
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
-    geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3))
-    geo.setAttribute('aSize', new THREE.BufferAttribute(siz, 1))
-    const mat = new THREE.ShaderMaterial({
-      vertexShader: Galaxy3DVert,
-      fragmentShader: Galaxy3DFrag,
-      uniforms: { uTime: { value: 0 }, uPixelRatio: { value: Math.min(window.devicePixelRatio || 1, 1.5) } },
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending
-    })
-    const points = new THREE.Points(geo, mat)
-    scene.add(points)
-
-    // per-node explode direction: away from the cluster anchor (unit sphere dir)
-    const dirs = model.map(m => {
-      const a = m.anchor
-      const len = Math.max(0.12, Math.hypot(a[0], a[1], a[2]))
-      return new THREE.Vector3(a[0] / len, a[1] / len * 0.6, a[2] / len)
-    })
-    const basePos = geo.attributes.position.array.slice()
-
-    // orb-state reactive accent light + faint reference sphere wireframe
-    const wire = new THREE.Mesh(
-      new THREE.SphereGeometry(2.6, 24, 16),
-      new THREE.MeshBasicMaterial({ color: 0x5cd6ff, wireframe: true, transparent: true, opacity: 0.045 }))
-    scene.add(wire)
-
-    let raf = 0, visible = true
-    const resize = () => {
-      const r = wrap.getBoundingClientRect()
-      const w = Math.max(80, Math.round(r.width)), h = Math.max(80, Math.round(r.height))
-      renderer.setSize(w, h, false)
-      camera.aspect = w / h
-      camera.updateProjectionMatrix()
-    }
-    const ro = new ResizeObserver(resize)
-    ro.observe(wrap)
-    resize()
-    const io = new IntersectionObserver(en => { visible = en[0].isIntersecting })
-    io.observe(wrap)
-
-    const ray = new THREE.Raycaster()
-    ray.params.Points = { threshold: 0.35 }
-    let downXY = null
-    const onDown = e => { downXY = [e.clientX, e.clientY] }
-    const onUp = e => {
-      if (!downXY) return
-      const dx = e.clientX - downXY[0], dy = e.clientY - downXY[1]
-      downXY = null
-      if (dx * dx + dy * dy > 36) return // orbit drag, not a pick
-      const r = renderer.domElement.getBoundingClientRect()
-      const nx = ((e.clientX - r.left) / r.width) * 2 - 1
-      const ny = -((e.clientY - r.top) / r.height) * 2 + 1
-      ray.setFromCamera(new THREE.Vector2(nx, ny), camera)
-      const hit = ray.intersectObject(points)
-      setSel(hit.length ? model[hit[0].index].n : null)
-    }
-    renderer.domElement.addEventListener('pointerdown', onDown)
-    renderer.domElement.addEventListener('pointerup', onUp)
-
-    const tmp = new THREE.Vector3()
-    function frame(now) {
-      raf = requestAnimationFrame(frame)
-      if (!visible) return
-      mat.uniforms.uTime.value = now / 1000
-      // explode: lerp each node outward from its cluster anchor
-      const f = explodeRef.current
-      const arr = geo.attributes.position.array
-      for (let i = 0; i < N; i++) {
-        tmp.set(basePos[i * 3] + dirs[i].x * f * 4.0, basePos[i * 3 + 1] + dirs[i].y * f * 2.6, basePos[i * 3 + 2] + dirs[i].z * f * 4.0)
-        arr[i * 3] += (tmp.x - arr[i * 3]) * 0.09
-        arr[i * 3 + 1] += (tmp.y - arr[i * 3 + 1]) * 0.09
-        arr[i * 3 + 2] += (tmp.z - arr[i * 3 + 2]) * 0.09
-      }
-      geo.attributes.position.needsUpdate = true
-      // node pulse when JARVIS is active
-      const st = OrbBus.state
-      wire.material.opacity = st === 'thinking' || st === 'working' ? 0.07 + 0.04 * Math.sin(now / 300) : 0.045
-      controls.update()
-      renderer.render(scene, camera)
-    }
-    raf = requestAnimationFrame(frame)
-
-    return () => {
-      cancelAnimationFrame(raf)
-      ro.disconnect()
-      io.disconnect()
-      renderer.domElement.removeEventListener('pointerdown', onDown)
-      renderer.domElement.removeEventListener('pointerup', onUp)
-      controls.dispose()
-      geo.dispose()
-      mat.dispose()
-      renderer.dispose()
-      if (renderer.domElement.parentNode === wrap) wrap.removeChild(renderer.domElement)
-    }
-  }, [model]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const fmtTs = (ts) => {
-    if (!ts) return ''
-    const d = new Date(ts * 1000)
-    const ago = (Date.now() - d.getTime()) / 60000
-    if (ago < 1) return 'now'; if (ago < 60) return `${Math.round(ago)}m ago`
-    if (ago < 1440) return `${Math.round(ago / 60)}h ago`
-    return `${Math.round(ago / 1440)}d ago`
-  }
-  const legend = jsx('div', { style: { position: 'absolute', left: 10, bottom: 8, display: 'flex', gap: 12, fontSize: 10, opacity: 0.75, pointerEvents: 'none' },
-    children: [
-      jsx('span', { children: '\u25CF tasks' }),
-      jsx('span', { style: { color: '#7ee787' }, children: '\u25CF cron/services' }),
-      jsx('span', { style: { color: '#f85149' }, children: '\u25CF failing' }),
-      jsx('span', { style: { color: 'var(--ui-text-tertiary)' }, children: '\u25CF done' }),
-      jsx('span', { style: { marginLeft: 'auto', opacity: 0.7 }, children: nodes.length + ' nodes \u00B7 drag \u00B7 wheel zoom \u00B7 click node' })
-    ] })
-  return jsx('div', { style: { position: 'relative', width: '100%', height: '100%', minHeight: 260 }, ref: wrapRef,
-    children: [
-      jsx('div', { style: { position: 'absolute', left: 10, top: 8, right: 10, display: 'flex', alignItems: 'center', gap: 10, zIndex: 25 }, children: [
-        jsx('span', { className: 'ao-label', style: { fontSize: 10 }, children: 'explode' }),
-        jsx('input', { type: 'range', min: 0, max: 100, value: Math.round(explode * 100),
-          onChange: e => setExplode(Number(e.target.value) / 100),
-          className: 'ao-range', style: { maxWidth: 220 }, 'aria-label': 'Explode clusters' }),
-        jsx('span', { style: { font: '400 10px ui-monospace, monospace', color: 'var(--ui-text-quaternary)' }, children: Math.round(explode * 100) + '%' })
-      ] }),
-      jsx('div', { style: { position: 'absolute', inset: 0 }, 'aria-label': 'memory galaxy 3d', children: null }),
-      legend,
-      jsx(GalaxyNodeActions, { node: sel, onClose: () => setSel(null) }),
-      sel && jsx('div', { style: { position: 'absolute', right: 10, top: 92, maxWidth: '62%', fontSize: 10, opacity: 0.75, pointerEvents: 'none' },
-        children: 'last activity: ' + (fmtTs(sel.ts) || 'unknown') })
-    ] })
-}
-
-// Picks the galaxy renderer (Settings > appearance & sound). The Settings
-// setter dispatches 'agentos-galaxy3d-change' so an open dashboard swaps live.
-function GalaxyStage() {
-  const [mode] = useLocal('agentos-galaxy3d', true)
-  const [, force] = useState(0)
-  useEffect(() => {
-    const h = () => force(v => v + 1)
-    window.addEventListener('agentos-galaxy3d-change', h)
-    return () => window.removeEventListener('agentos-galaxy3d-change', h)
-  }, [])
-  if (mode === false) return jsx(MemoryGalaxy, {})
-  return jsx(MemoryGalaxy3D, {})
-}
-
 // ServiceDrawer opener bus: card rows (StatusCard, galaxy nodes) can pop the
 // existing services drawer without prop-drilling through the widget grid.
 const DrawerBus = {
@@ -4323,7 +4099,7 @@ function NeuralCore({ onOpenSpotlight }) {
   return jsxs('div', {
     style: { position: 'relative', width: '100%', height: '100%', minHeight: 380 },
     children: [
-      jsx(GalaxyStage, {}),
+      jsx(MemoryGalaxy, {}),
       // Orb overlaid dead-center with circular fade vignette
       jsx('div', {
         style: {
@@ -4630,11 +4406,6 @@ function SettingsSection() {
   const hosted = (cq.data && cq.data.hosted) || []
   const mcps = (cq.data && cq.data.mcps) || []
   const pct = v => Math.round(v * 100) + '%'
-  const [galaxy3d, setGalaxy3d] = useLocal('agentos-galaxy3d', true)
-  const changeGalaxy = v => {
-    setGalaxy3d(v === '3d')
-    try { window.dispatchEvent(new Event('agentos-galaxy3d-change')) } catch { /* ignore */ }
-  }
 
   return jsxs('div', { className: 'mx-auto flex w-full max-w-4xl flex-col gap-3', children: [
     // ---- appearance
@@ -4642,18 +4413,6 @@ function SettingsSection() {
       label: 'appearance & sound', delay: 40,
       children: jsxs('div', { className: 'grid gap-4 sm:grid-cols-2', children: [
         jsxs('div', { className: 'space-y-3', children: [
-          jsxs('div', { children: [
-            jsx('div', { className: 'ao-label mb-1', children: 'memory galaxy renderer' }),
-            jsx('select', {
-              className: 'ao-select', value: galaxy3d ? '3d' : '2d',
-              onChange: e => changeGalaxy(e.target.value),
-              'aria-label': 'Memory galaxy renderer',
-              children: [
-                jsx('option', { value: '3d', children: '3d depth (three.js \u00B7 explode \u00B7 click-to-act)' }),
-                jsx('option', { value: '2d', children: '2d canvas (light)' })
-              ]
-            })
-          ] }),
           jsxs('div', { children: [
             jsxs('div', { className: 'mb-1 flex items-baseline justify-between', children: [
               jsx('span', { className: 'ao-label', children: 'hud transparency' }),
