@@ -1580,7 +1580,11 @@ def connectors_connect(body: dict = Body(...)):
     CACHE.mkdir(parents=True, exist_ok=True)
     flags = 0
     if os.name == "nt":
-        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        # CREATE_NO_WINDOW only — do NOT add DETACHED_PROCESS: a detached parent
+        # has no console for children to inherit, so console grandchildren
+        # (cmd/venv-launcher chains) auto-create a NEW VISIBLE console.
+        # NO_WINDOW gives the child a hidden console the whole chain inherits.
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     with open(out_file, "w", encoding="utf-8") as fh:
         subprocess.Popen(
             ["hermes", "connectors", "connect", name],
@@ -2000,7 +2004,7 @@ def _launch_webull_login(silent: bool = False) -> dict:
     if silent:
         log = CACHE / "webull-login-silent.log"
         CACHE.mkdir(parents=True, exist_ok=True)
-        flags = 0x00000008 | 0x00000200 | 0x08000000  # detached, no window
+        flags = 0x00000200 | 0x08000000  # new process group + hidden console (NOT detached — see /connectors note)
         try:
             with open(log, "ab") as fh:
                 subprocess.Popen(
