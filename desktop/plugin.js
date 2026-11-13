@@ -4960,6 +4960,20 @@ function SettingsSection() {
   const [hudOp, setHudOp] = useSharedNum('agentos-hud-opacity', 1)
   const [ttsVol, setTtsVol] = useSharedNum('agentos-tts-vol', 1)
   const [chimesOff, setChimesOff] = useState(() => { try { return localStorage.getItem('agentos-chimes') === 'off' } catch { return false } })
+  // dashboard card visibility (agentos-grid-v3 hidden list — same store the
+  // grid's ⠿-hide and hidden-chip restore use, so all three stay in sync)
+  const [gridHidden, setGridHidden] = useState(() => loadLayout().hidden)
+  useEffect(() => {
+    const onChange = () => setGridHidden(loadLayout().hidden)
+    window.addEventListener('agentos-grid-change', onChange)
+    return () => window.removeEventListener('agentos-grid-change', onChange)
+  }, [])
+  function toggleWidget(id) {
+    const hide = !gridHidden.includes(id)
+    haptic('tap')
+    setWidgetHidden(id, hide)
+    setGridHidden(loadLayout().hidden)
+  }
   const d = q.data
   const [voice, setVoice] = useState('')
   const [voiceSaved, setVoiceSaved] = useState('')
@@ -5124,6 +5138,34 @@ function SettingsSection() {
         ] })
       ] })
     }),
+    // ---- dashboard cards (show/hide, mirrors the grid's hide + restore)
+    jsx(AoCard, {
+      label: 'dashboard cards', delay: 70,
+      right: jsx('span', { className: 'font-mono text-[0.75rem] text-(--ui-text-quaternary)', children:
+        Object.keys(WIDGETS).length - gridHidden.length + ' of ' + Object.keys(WIDGETS).length + ' shown' }),
+      children: jsxs('div', { className: 'flex flex-wrap gap-1.5', children: [
+        Array.from(new Set([...DEFAULT_ORDER, ...Object.keys(WIDGETS)])).map(id =>
+          jsx('button', {
+            type: 'button',
+            className: 'ao-btn',
+            style: gridHidden.includes(id)
+              ? { color: 'var(--ui-text-quaternary)', borderColor: 'var(--ui-stroke-secondary)' }
+              : { borderColor: 'var(--ui-accent)', color: 'var(--ui-text-primary)' },
+            'aria-pressed': String(!gridHidden.includes(id)),
+            onClick: () => toggleWidget(id),
+            title: id === 'console'
+              ? 'Command transcript. Always hidden while the dock is pinned — the dock owns it then.'
+              : 'Toggle this card on the dashboard',
+            children: [
+              jsx('span', { 'aria-hidden': 'true', style: { color: gridHidden.includes(id) ? 'var(--ui-text-quaternary)' : 'var(--ui-accent)' }, children: gridHidden.includes(id) ? '\u2610' : '\u2611' }),
+              WIDGETS[id].title
+            ]
+          }, id)
+        ),
+        jsx('div', { className: 'w-full text-[0.8rem] text-(--ui-text-quaternary)', children:
+          'Unchecked cards are removed from the dashboard. You can also drag the \u2807 handle onto another card to reposition, or restore from the Hidden row under the grid.' })
+      ] })
+    }),
     // ---- api keys
     jsx(AoCard, {
       label: 'api keys', delay: 100,
@@ -5275,15 +5317,6 @@ function loadLayout() {
       const order = raw.order.filter(id => WIDGETS[id])
       for (const id of DEFAULT_ORDER) if (!order.includes(id)) order.push(id)
       const hidden = Array.isArray(raw.hidden) ? raw.hidden.filter(id => WIDGETS[id]) : []
-      // one-time migration: the connectors/tools orbit card retired in favor of
-      // agent activity + release board
-      if (!raw.orbitRetired) {
-        const oi = order.indexOf('orbit')
-        if (oi !== -1) order.splice(oi, 1)
-        if (!hidden.includes('orbit')) hidden.push('orbit')
-        raw.orbitRetired = true
-        try { localStorage.setItem('agentos-grid-v3', JSON.stringify({ ...raw, order, hidden })) } catch { /* ignore */ }
-      }
       return {
         order,
         hidden,
@@ -5292,6 +5325,19 @@ function loadLayout() {
     }
   } catch { /* fall through to defaults */ }
   return { order: DEFAULT_ORDER.slice(), hidden: [], sizes: defaultSizes() }
+}
+
+// Show/hide a dashboard card from Settings (mirrors the ⠿-hide + hidden-chip
+// restore paths). Re-appends to the order when un-hiding a retired widget so
+// the card actually appears. Broadcasts so a live grid re-reads immediately.
+function setWidgetHidden(id, hide) {
+  const layout = loadLayout()
+  const hidden = hide
+    ? Array.from(new Set([...layout.hidden, id]))
+    : layout.hidden.filter(x => x !== id)
+  const order = (!hide && !layout.order.includes(id)) ? [...layout.order, id] : layout.order
+  try { localStorage.setItem('agentos-grid-v3', JSON.stringify({ ...layout, order, hidden })) } catch { /* ignore */ }
+  try { window.dispatchEvent(new Event('agentos-grid-change')) } catch { /* ignore */ }
 }
 
 function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) {
@@ -5323,6 +5369,13 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
     window.addEventListener('pointerup', disarm)
     window.addEventListener('pointercancel', disarm)
     return () => { window.removeEventListener('pointerup', disarm); window.removeEventListener('pointercancel', disarm) }
+  }, [])
+  // Settings → dashboard cards toggles broadcast here so a mounted grid
+  // reflects them without a remount
+  useEffect(() => {
+    const onChange = () => setLayout(loadLayout())
+    window.addEventListener('agentos-grid-change', onChange)
+    return () => window.removeEventListener('agentos-grid-change', onChange)
   }, [])
 
   function persist(next) {
