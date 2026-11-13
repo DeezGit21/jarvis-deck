@@ -2139,6 +2139,16 @@ function TelegramCard() {
   })
   const d = q.data
   const chats = (d && d.chats) || []
+  // chat identity: every session is a DM with the gateway bot — label rows with
+  // WHICH conversation (session) each is: DM badge + started date, so the title
+  // (which reads like a task name) can't be mistaken for a contact name.
+  const tgMeta = c => {
+    const started = c.first_ts
+      ? new Date(c.first_ts * (String(Math.round(c.first_ts)).length > 10 ? 1 : 1000)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      : ''
+    const kind = c.chat_type === 'group' ? 'group' : c.chat_type === 'bot' ? 'bot' : 'dm'
+    return { started, kind }
+  }
   return jsx(AoCard, {
     label: 'telegram \u00b7 recent chats',
     delay: 260,
@@ -2150,30 +2160,39 @@ function TelegramCard() {
     }),
     children: jsxs(Fragment, {
       children: [
+        jsx('div', { className: 'mb-1 text-[0.625rem] text-(--ui-text-quaternary)', children: 'each row = a separate conversation thread with your bot \u00b7 click for JARVIS to read the full thread' }),
         q.isLoading && jsxs('div', { className: 'space-y-3', children: [
           jsx(Skel, { h: '.9rem' }), jsx(Skel, { h: '.9rem', delay: 120 }), jsx(Skel, { h: '.9rem', delay: 240 })
         ] }),
         q.error && jsx('div', { className: 'mt-2 text-sm text-(--ui-text-secondary)', children: q.error.message }),
         d && jsx('div', { className: 'space-y-1', children: chats.length === 0
           ? jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'no telegram history on the gateway yet' })
-          : chats.map((c, i) =>
-            jsxs('div', {
+          : chats.map((c, i) => {
+            const meta = tgMeta(c)
+            return jsxs('div', {
               className: 'ao-in flex items-baseline gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
               style: { animationDelay: 150 + i * 70 + 'ms', cursor: 'pointer' },
               onClick: () => { Chimes.play('up'); ConsoleStore.send('open my telegram conversation "' + c.title + '" \u2014 read the thread and give me a quick summary of what was decided and what is still open') },
-              title: 'Ask JARVIS to summarize this chat',
+              title: 'Telegram ' + meta.kind + ' with @Darins_Hermes_bot \u00b7 started ' + meta.started + ' \u00b7 ' + c.n + ' messages \u2014 ask JARVIS to summarize',
               children: [
                 jsx('span', { className: 'mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', style: { background: '#2AABEE' } }),
                 jsxs('span', { className: 'min-w-0 flex-1', children: [
                   jsxs('span', { className: 'flex items-baseline gap-2', children: [
+                    jsx('span', {
+                      className: 'shrink-0 rounded px-1 font-mono text-[0.5625rem] uppercase',
+                      style: { background: meta.kind === 'group' ? 'rgba(211,153,34,.14)' : 'rgba(42,171,238,.12)', color: meta.kind === 'group' ? '#d29922' : '#2AABEE' },
+                      children: meta.kind
+                    }),
                     jsx('span', { className: 'truncate text-xs font-semibold text-(--ui-text-primary)', children: c.title }),
                     jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.625rem] text-(--ui-text-quaternary)', children: fmtTgAgo(c.ts) })
                   ] }),
-                  c.preview && jsx('div', { className: 'mt-0.5 truncate text-[0.625rem] text-(--ui-text-tertiary)', children: c.preview })
+                  c.preview && jsx('div', { className: 'mt-0.5 truncate text-[0.625rem] text-(--ui-text-tertiary)', children: c.preview }),
+                  jsx('div', { className: 'mt-0.5 text-[0.5625rem] text-(--ui-text-quaternary)', children: 'dm \u00b7 you \u2194 @Darins_Hermes_bot \u00b7 since ' + meta.started })
                 ] }),
                 jsx('span', { className: 'shrink-0 font-mono text-[0.625rem] text-(--ui-text-quaternary)', children: c.n })
               ]
-            }, c.id || i))
+            }, c.id || i)
+          })
         })
       ]
     })
@@ -3898,6 +3917,36 @@ function ServiceDrawer({ svcs, open, onClose }) {
 }
 
 // ------------------------------------------------------------ hover-linking bus
+// Scroll forensics — silent recorder for "the page moves by itself" reports.
+// Hooks every programmatic scroll entry point, logs scroll events with
+// isTrusted (untrusted = JS dispatch, trusted = native input), samples
+// scrollY. window.__scrollProbeReport() returns the last 200 entries as JSON.
+if (typeof window !== 'undefined' && !window.__scrollProbe) {
+  const P = { log: [] }
+  const stamp = (kind, extra) => {
+    P.log.push({ t: Date.now(), y: Math.round(window.scrollY), kind, ...extra })
+    if (P.log.length > 400) P.log.shift()
+  }
+  const hook = (obj, name) => {
+    const orig = obj[name]
+    if (!orig) return
+    obj[name] = function (...a) {
+      stamp('js:' + name, {
+        args: a.map(x => (x && x.top !== undefined) ? ('top:' + x.top) : String(x)).slice(0, 2),
+        stack: (new Error().stack || '').split('\n').slice(2, 5).join(' << ')
+      })
+      return orig.apply(this, a)
+    }
+  }
+  hook(window, 'scrollTo')
+  hook(window, 'scrollBy')
+  hook(Element.prototype, 'scrollIntoView')
+  hook(Element.prototype, 'focus')
+  window.addEventListener('scroll', e => stamp('event', { trusted: e.isTrusted }), { passive: true })
+  window.__scrollProbe = P
+  window.__scrollProbeReport = () => JSON.stringify(P.log.slice(-200), null, 1)
+}
+
 const HoverBus = { topic: null, _subs: new Set(), subscribe(fn) { this._subs.add(fn); return () => this._subs.delete(fn) },
   set(t) { this.topic = t; for (const fn of this._subs) { try { fn(t) } catch {} } },
   clear() { this.set(null) } }
@@ -4960,6 +5009,18 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
   const dragId = useRef(null)
   const [dragging, setDragging] = useState(null)
   const [overId, setOverId] = useState(null)
+  // Grab-handle drag is ALWAYS on: pressing ⠿ arms only that card as draggable
+  // for the life of the gesture, so row clicks and text selection keep working.
+  const [armed, setArmed] = useState(null)
+  const armedRef = useRef(null)
+  armedRef.current = armed
+  const disarm = () => setArmed(null)
+  // release anywhere (not just on the handle) ends the armed gesture
+  useEffect(() => {
+    window.addEventListener('pointerup', disarm)
+    window.addEventListener('pointercancel', disarm)
+    return () => { window.removeEventListener('pointerup', disarm); window.removeEventListener('pointercancel', disarm) }
+  }, [])
 
   function persist(next) {
     setLayout(next)
@@ -5027,41 +5088,46 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
         className: cn('ao-grid-flip relative'),
         style: { gridColumn: 'span ' + size.w, gridRow: 'span ' + size.h },
         'data-dragging': isDragging ? '1' : undefined,
-        draggable: customize ? 'true' : undefined,
+        'data-over': isOver ? '1' : undefined,
+        draggable: (customize || armed === id) ? 'true' : undefined,
         onDragStart: e => {
-          if (!customize) return
+          if (!customize && armedRef.current !== id) return
           dragId.current = id
           setDragging(id)
           try { e.dataTransfer.setData('text/plain', id) } catch { /* ignore */ }
           e.dataTransfer.effectAllowed = 'move'
         },
         onDragOver: e => {
-          if (!customize || !dragId.current) return
+          if (!dragId.current) return
           e.preventDefault()
           if (dragId.current !== id) setOverId(id)
         },
         onDragLeave: () => { if (overId === id) setOverId(null) },
         onDrop: e => {
-          if (!customize) return
+          if (!dragId.current) return
           e.preventDefault()
           reorder(dragId.current, id)
           dragId.current = null
           setDragging(null)
           setOverId(null)
+          disarm()
         },
         onDragEnd: () => {
           dragId.current = null
           setDragging(null)
           setOverId(null)
+          disarm()
         },
         children: [
-          customize && id !== 'hero' && jsxs('div', { className: 'absolute right-2 top-2 z-30 flex items-center gap-1', children: [
+          id !== 'hero' && jsxs('div', { className: 'absolute right-2 top-2 z-30 flex items-center gap-1', children: [
             jsx('span', {
-              className: 'ao-wbtn', title: 'Drag to reorder', 'aria-hidden': 'true',
+              className: 'ao-wbtn', title: 'Drag to reposition \u2014 grab and drop anywhere', 'aria-hidden': 'true',
               style: { cursor: 'grab', fontSize: '.8rem' },
+              onPointerDown: () => setArmed(id),
+              onPointerUp: disarm,
               children: '⠿'
             }),
-            jsx('button', {
+            customize && jsx('button', {
               type: 'button', className: 'ao-wbtn', title: 'Hide widget',
               onClick: () => hide(id),
               children: '✕'
@@ -5075,7 +5141,7 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
           }),
           jsx(WidgetBoundary, { children: w.render({ onOpenSpotlight, onOpenServices }) })
         ]
-      }, id + (isOver ? ':over' : ''))
+      }, id) // stable key — ':over' keying remounted the whole card mid-drag
     }),
     layout.hidden.length > 0 && jsx('div', { className: 'ao-w-12 flex flex-wrap items-center gap-2 text-xs text-(--ui-text-tertiary)', children: [
       jsx('span', { children: 'Hidden:' }),

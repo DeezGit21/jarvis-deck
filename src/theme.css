@@ -32,6 +32,15 @@ html, body, #root {
   letter-spacing: 0.02em;
 }
 
+/* Scroll stability: cards poll and re-render on timers, so browser scroll
+   anchoring "helpfully" nudges the page up/down while the user isn't touching
+   it, and a deleted anchor node above the viewport snaps the page to top.
+   Disable anchoring entirely — the deck's own fixed grid rows keep layout
+   stable, so nothing needs the browser's compensation. */
+html, body {
+  overflow-anchor: none;
+}
+
 /* HUD scanlines & grid */
 .hud-scanlines {
   background: linear-gradient(
