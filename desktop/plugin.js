@@ -2115,6 +2115,130 @@ function MailCard() {
   })
 }
 
+// ------------------------------------------------------------ telegram & google voice
+
+function fmtTgAgo(ts) {
+  if (!ts) return ''
+  const s = Math.max(0, Date.now() / 1000 - ts)
+  if (s < 3600) return Math.max(1, Math.round(s / 60)) + 'm ago'
+  if (s < 86400) return Math.round(s / 3600) + 'h ago'
+  return Math.round(s / 86400) + 'd ago'
+}
+
+const VOICE_KIND_STYLE = {
+  'text': { background: 'rgba(92,214,255,.10)', color: '#5cd6ff' },
+  'missed call': { background: 'rgba(248,81,73,.12)', color: '#f85149' },
+  'voicemail': { background: 'rgba(211,153,34,.12)', color: '#d29922' }
+}
+
+function TelegramCard() {
+  const q = useQuery({
+    queryKey: ['agentos', 'telegram-chats'],
+    queryFn: () => REST('/telegram/chats'),
+    refetchInterval: 120000
+  })
+  const d = q.data
+  const chats = (d && d.chats) || []
+  return jsx(AoCard, {
+    label: 'telegram \u00b7 recent chats',
+    delay: 260,
+    right: jsx('button', {
+      type: 'button',
+      className: 'text-xs text-(--ui-accent)',
+      onClick: () => q.refetch(),
+      children: 'Refresh'
+    }),
+    children: jsxs(Fragment, {
+      children: [
+        q.isLoading && jsxs('div', { className: 'space-y-3', children: [
+          jsx(Skel, { h: '.9rem' }), jsx(Skel, { h: '.9rem', delay: 120 }), jsx(Skel, { h: '.9rem', delay: 240 })
+        ] }),
+        q.error && jsx('div', { className: 'mt-2 text-sm text-(--ui-text-secondary)', children: q.error.message }),
+        d && jsx('div', { className: 'space-y-1', children: chats.length === 0
+          ? jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'no telegram history on the gateway yet' })
+          : chats.map((c, i) =>
+            jsxs('div', {
+              className: 'ao-in flex items-baseline gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
+              style: { animationDelay: 150 + i * 70 + 'ms', cursor: 'pointer' },
+              onClick: () => { Chimes.play('up'); ConsoleStore.send('open my telegram conversation "' + c.title + '" \u2014 read the thread and give me a quick summary of what was decided and what is still open') },
+              title: 'Ask JARVIS to summarize this chat',
+              children: [
+                jsx('span', { className: 'mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', style: { background: '#2AABEE' } }),
+                jsxs('span', { className: 'min-w-0 flex-1', children: [
+                  jsxs('span', { className: 'flex items-baseline gap-2', children: [
+                    jsx('span', { className: 'truncate text-xs font-semibold text-(--ui-text-primary)', children: c.title }),
+                    jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.625rem] text-(--ui-text-quaternary)', children: fmtTgAgo(c.ts) })
+                  ] }),
+                  c.preview && jsx('div', { className: 'mt-0.5 truncate text-[0.625rem] text-(--ui-text-tertiary)', children: c.preview })
+                ] }),
+                jsx('span', { className: 'shrink-0 font-mono text-[0.625rem] text-(--ui-text-quaternary)', children: c.n })
+              ]
+            }, c.id || i))
+        })
+      ]
+    })
+  })
+}
+
+function VoiceCard() {
+  const q = useQuery({
+    queryKey: ['agentos', 'voice-activity'],
+    queryFn: () => REST('/voice/activity'),
+    refetchInterval: 180000
+  })
+  const d = q.data
+  const accounts = (d && d.accounts) || []
+  const rows = accounts.flatMap(a => (a.items || []).map(v => ({ ...v, acct: a.name })))
+  const failing = accounts.filter(a => !a.ok)
+  return jsx(AoCard, {
+    label: 'google voice \u00b7 texts \u00b7 calls \u00b7 voicemail',
+    delay: 300,
+    right: jsx('button', {
+      type: 'button',
+      className: 'text-xs text-(--ui-accent)',
+      onClick: () => q.refetch(),
+      children: 'Refresh'
+    }),
+    children: jsxs(Fragment, {
+      children: [
+        q.isLoading && jsxs('div', { className: 'space-y-3', children: [
+          jsx(Skel, { h: '.9rem' }), jsx(Skel, { h: '.9rem', delay: 120 }), jsx(Skel, { h: '.9rem', delay: 240 })
+        ] }),
+        q.error && jsx('div', { className: 'mt-2 text-sm text-(--ui-text-secondary)', children: q.error.message }),
+        d && jsxs(Fragment, {
+          children: [
+            rows.length === 0 && !failing.length && jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'no google voice activity in the last 30 days' }),
+            jsx('div', { className: 'space-y-1', children: rows.map((v, i) =>
+              jsxs('div', {
+                className: 'ao-in flex items-baseline gap-2 rounded-md px-1.5 py-1.5 text-sm transition-colors hover:bg-(--chrome-action-hover)',
+                style: { animationDelay: 150 + i * 70 + 'ms', cursor: 'pointer' },
+                onClick: () => { Chimes.play('up'); ConsoleStore.send('my google voice had a ' + v.kind + ' with ' + v.contact + ' \u2014 find that message in my gmail, read the full conversation, and tell me what they need') },
+                title: 'Ask JARVIS to pull the full conversation',
+                children: [
+                  jsx('span', {
+                    className: 'shrink-0 rounded px-1 py-px font-mono text-[9px] uppercase tracking-wide',
+                    style: VOICE_KIND_STYLE[v.kind] || { background: 'rgba(148,163,184,.12)', color: '#94a3b8' },
+                    children: v.kind
+                  }),
+                  jsxs('span', { className: 'min-w-0 flex-1', children: [
+                    jsxs('span', { className: 'flex items-baseline gap-2', children: [
+                      jsx('span', { className: 'shrink-0 text-xs font-semibold text-(--ui-text-primary)', children: v.contact }),
+                      jsx('span', { className: 'truncate text-xs text-(--ui-text-secondary)', children: v.snippet }),
+                      v.date && jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.625rem] text-(--ui-text-quaternary)', children: v.date.slice(5, 16) })
+                    ] })
+                  ] }),
+                  gwsTag(v.acct)
+                ]
+              }, (v.contact || i) + '-' + v.date + '-' + i)
+            ) }),
+            failing.map(a => jsx('div', { className: 'mt-2 truncate text-[0.625rem] text-(--ui-text-quaternary)', title: a.error, children: a.name + ': voice unavailable' }, 'verr-' + a.name))
+          ]
+        })
+      ]
+    })
+  })
+}
+
 // ------------------------------------------------------------ status
 
 function StatusCard() {
@@ -4782,6 +4906,8 @@ const WIDGETS = {
   status:  { title: 'Status',        span: 4,  rows: 5, render: () => jsx(StatusCard, {}) },
   calendar:{ title: 'Calendar',     span: 4,  rows: 4, render: () => jsx(CalendarCard, {}) },
   mail:    { title: 'Inbox',        span: 4,  rows: 4, render: () => jsx(MailCard, {}) },
+  telegram:{ title: 'Telegram',     span: 4,  rows: 4, render: () => jsx(TelegramCard, {}) },
+  voice:   { title: 'Google Voice', span: 4,  rows: 4, render: () => jsx(VoiceCard, {}) },
   automation: { title: 'Automation', span: 4,  rows: 4, render: () => jsx(AutomationCard, {}) },
   memory:  { title: 'Memory',        span: 4,  rows: 4, render: () => jsx(MemoryCard, {}) },
   metrics: { title: 'Metrics',       span: 4,  rows: 4, render: () => jsx(MetricsCard, {}) },
@@ -4793,7 +4919,7 @@ const WIDGETS = {
   releases:{ title: 'Release board',  span: 6, rows: 4, render: () => jsx(ReleasesCard, {}) }
 }
 
-const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'todos', 'brief', 'status', 'calendar', 'mail', 'automation', 'memory', 'metrics', 'quotes', 'agents', 'releases', 'console']
+const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'todos', 'brief', 'status', 'calendar', 'mail', 'telegram', 'voice', 'automation', 'memory', 'metrics', 'quotes', 'agents', 'releases', 'console']
 
 function defaultSizes() {
   const sizes = {}
