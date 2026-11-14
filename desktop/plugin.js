@@ -987,7 +987,13 @@ const Tts = {
       const audio = new Audio(url)
       this._audio = audio
       audio.volume = this.vol()
-      audio.play().catch(() => this._fallbackSpeak(line, null))
+      audio.play().catch(err => {
+        // stop() interrupting a pending play() rejects with AbortError AFTER
+        // this._audio was swapped/nulled — that is not an endpoint failure.
+        // Falling back there spoke the generic Windows voice ON TOP of the
+        // real JARVIS audio (double-voice bug). Genuine load failures only.
+        if (this._audio === audio && (!err || err.name !== 'AbortError')) this._fallbackSpeak(line, null)
+      })
     } catch { this._fallbackSpeak(line, null) }
     return true
   },
@@ -1018,10 +1024,16 @@ const Tts = {
       audio.volume = this.vol()
       this._audio = audio
       audio.onended = done
-      audio.onerror = () => this._fallbackSpeak(clean, done)
+      audio.onerror = () => { if (this._audio === audio) this._fallbackSpeak(clean, done) }
       await audio.play()
       return
-    } catch { /* endpoint unavailable — use the browser voice */ }
+    } catch (err) {
+      // Same trap as ack(): stop() or a newer utterance aborting this play()
+      // is not an endpoint failure — never let the browser fallback voice talk
+      // over the real JARVIS audio. Only a genuine load failure falls back.
+      if (this._audio !== audio || (err && err.name === 'AbortError')) return
+      /* endpoint unavailable — use the browser voice */
+    }
     this._fallbackSpeak(clean, done)
   },
   _fallbackSpeak(clean, done) {
@@ -4977,15 +4989,21 @@ function AutomationCard() {
       jsx('div', { className: 'ao-label', children: 'activity' }),
       jsx('div', { className: 'space-y-1.5', children: events.length ? events.slice(0, 8).map((ev, i) => {
         const failed = ev.kind === 'auto_failed' || ev.kind === 'approved_failed'
+        // A failure the service already came back from is history, not an
+        // active alarm — render it resolved (green ✓, dimmed) so a successful
+        // restart never sits under a stale red ✕ (D's report).
+        const resolved = failed && events.some(o =>
+          o.service === ev.service && (o.kind === 'recovered' || o.kind === 'auto_fixed' || o.kind === 'approved_fixed') &&
+          (parseFloat(o.ts_epoch) || 0) > (parseFloat(ev.ts_epoch) || 0))
         const open = openEv === ev.id
-        return jsxs('div', { className: 'ao-in rounded-md transition-colors ' + (open ? 'border border-(--ui-stroke-secondary) bg-[rgba(6,10,16,.45)] px-2 py-1.5' : 'cursor-pointer px-0.5 py-0.5 hover:bg-[rgba(92,214,255,.05)]'), style: { animationDelay: i * 40 + 'ms' },
+        return jsxs('div', { className: 'ao-in rounded-md transition-colors ' + (open ? 'border border-(--ui-stroke-secondary) bg-[rgba(6,10,16,.45)] px-2 py-1.5' : 'cursor-pointer px-0.5 py-0.5 hover:bg-[rgba(92,214,255,.05)]'), style: { animationDelay: i * 40 + 'ms', opacity: resolved && !open ? 0.6 : undefined },
           onClick: () => { if (!open) Chimes.play('tap'); setOpenEv(open ? null : ev.id) },
           title: open ? '' : 'Click for details',
           children: [
             jsxs('div', { className: 'flex items-center gap-2 min-w-0 text-xs', children: [
-              jsx('span', { className: 'shrink-0', style: { color: (REM_KIND[ev.kind] || {}).color || '#64748b' }, children: (REM_KIND[ev.kind] || {}).icon || '•' }),
+              jsx('span', { className: 'shrink-0', style: { color: resolved ? '#3fb950' : (REM_KIND[ev.kind] || {}).color || '#64748b' }, children: resolved ? '✓' : (REM_KIND[ev.kind] || {}).icon || '•' }),
               jsx('span', { className: 'truncate text-(--ui-text-secondary)', children: ev.service }),
-              jsx('span', { className: 'truncate font-mono text-[12px] text-(--ui-text-quaternary)', children: ev.kind.replace('_', ' ') }),
+              jsx('span', { className: 'truncate font-mono text-[12px] text-(--ui-text-quaternary)', children: resolved ? ev.kind.replace('_', ' ') + ' · resolved' : ev.kind.replace('_', ' ') }),
               jsx('span', { className: 'ml-auto shrink-0 font-mono text-[12px] text-(--ui-text-quaternary)', children: fmtAgo(ev.at) })
             ] }),
             open && jsxs(Fragment, { children: [
