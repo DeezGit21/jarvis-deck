@@ -24,6 +24,7 @@ from pathlib import Path
 
 import yaml
 from fastapi import APIRouter, Body, HTTPException, Response
+from fastapi.responses import StreamingResponse
 
 router = APIRouter()
 
@@ -1202,12 +1203,13 @@ def _deck_session_id() -> str:
 
 @router.post("/command/reset")
 def command_reset():
-    """Start a new conversation: drop the rolling deck session."""
+    """Start a new conversation: drop the rolling deck session + voice history."""
     had = bool(_deck_session_id())
     try:
         DECK_SESSION_FILE.unlink()
     except OSError:
         pass
+    _voice_reset()
     return {"ok": True, "cleared": had}
 
 
@@ -1274,6 +1276,193 @@ def command(body: dict = Body(...)):
     if not reply:
         raise HTTPException(status_code=502, detail="command returned empty output")
     return {"ok": True, "reply": reply, "date": _local_date()}
+
+
+# ---------------------------------------------------------------- voice chat (realtime streaming)
+#
+# The Apollo-style leg: a fast conversational LLM (OpenRouter, SSE streaming)
+# whose reply streams to the frontend as NDJSON — one event per sentence — so
+# the browser speaks each sentence while the rest is still generating. Requests
+# that need REAL actions come back as {t:'agent',cmd} and are routed through
+# POST /command (the full agent tool-loop). Typed console input still uses
+# /command directly; this path is what push-to-talk hits.
+
+VOICE_HISTORY_FILE = CACHE / "voice-chat-history.json"
+_VC_CFG_RAW = _CFG.get("voice_chat")
+_VC_CFG = _VC_CFG_RAW if isinstance(_VC_CFG_RAW, dict) else {}
+_VOICE_MODEL = str(_VC_CFG.get("model") or "z-ai/glm-5.3-flash")
+
+_VOICE_SYSTEM = """You are JARVIS, the voice assistant of {persona}. You are answering through a VOICE interface — your reply is spoken aloud, sentence by sentence.
+
+Rules:
+- Answer conversationally in one to three SHORT sentences. Plain text only: no markdown, no lists, no emoji, no stage directions.
+- You have persistent memory below for context; use it, never recite it back.
+- If the request needs a REAL ACTION you cannot answer from knowledge alone (restart or diagnose a service, send or reply to a message, create or complete tasks, run a script or command, query the CRM), reply with EXACTLY one line and nothing else:
+[[agent]] <the command, phrased as an instruction to the ops agent>
+- If something important is ambiguous, ask one short question instead of guessing."""
+
+
+def _voice_history() -> list:
+    if not VOICE_HISTORY_FILE.exists():
+        return []
+    try:
+        data = json.loads(VOICE_HISTORY_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _voice_hist_append(role: str, content: str) -> None:
+    CACHE.mkdir(parents=True, exist_ok=True)
+    hist = _voice_history()
+    hist.append({"role": role, "content": content[:4000]})
+    VOICE_HISTORY_FILE.write_text(json.dumps(hist[-24:], ensure_ascii=False), encoding="utf-8")
+
+
+def _voice_reset() -> None:
+    try:
+        VOICE_HISTORY_FILE.unlink()
+    except OSError:
+        pass
+
+
+def _openrouter_stream(messages: list, timeout: int = 90):
+    key = _read_env().get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY missing — add it in Settings -> API keys")
+    payload = json.dumps({"model": _VOICE_MODEL, "messages": messages, "stream": True}).encode("utf-8")
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions", data=payload,
+        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json",
+                 "HTTP-Referer": "http://localhost:4527", "X-Title": "Jarvis Deck"})
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+_SENTENCE_END = re.compile(r"[.!?…]+(?:\s|$)")
+
+
+def _drain_sentences(buf: str) -> tuple[list, str]:
+    """Split complete sentences off the front of the streaming buffer."""
+    out: list[str] = []
+    while True:
+        m = _SENTENCE_END.search(buf)
+        if not m:
+            break
+        end = m.end()
+        while end < len(buf) and buf[end] in '")]\'»':
+            end += 1
+        sent = buf[:end].strip()
+        buf = buf[end:]
+        if sent:
+            out.append(sent)
+    return out, buf.lstrip()
+
+
+@router.post("/voice/chat")
+def voice_chat(body: dict = Body(...)):
+    """Streaming voice turn. NDJSON events: {t:'s',text} per sentence,
+    {t:'agent',cmd} to hand off to the full agent, {t:'err',msg}, {t:'done'}."""
+    query = (body.get("query") or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query required")
+    if len(query) > 8000:
+        raise HTTPException(status_code=400, detail="query too long")
+
+    def ev(obj) -> bytes:
+        return (json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8")
+
+    def generate():
+        fast = _memory_fastpath(query)
+        if fast:
+            yield ev({"t": "s", "text": fast["reply"]})
+            yield ev({"t": "done"})
+            return
+        if query.lower() in ("/new", "/reset"):
+            _voice_reset()
+            try:
+                DECK_SESSION_FILE.unlink()
+            except OSError:
+                pass
+            yield ev({"t": "s", "text": "Fresh conversation, sir — history cleared."})
+            yield ev({"t": "done"})
+            return
+
+        system = _VOICE_SYSTEM.format(persona=_PERSONA)
+        mem_block = _memory_block("").strip()
+        if mem_block:
+            system += "\n\n" + mem_block
+        messages = ([{"role": "system", "content": system}]
+                    + _voice_history()[-16:]
+                    + [{"role": "user", "content": query}])
+        started = time.time()
+        full = ""
+        buf = ""
+        held: list[str] = []  # sentences withheld once "[[" appears — could be
+        try:                  # an [[agent]] marker; never speak that aloud
+            resp = _openrouter_stream(messages)
+            try:
+                for raw in resp:
+                    line = raw.decode("utf-8", errors="ignore").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = ((chunk.get("choices") or [{}])[0].get("delta") or {}).get("content")
+                    if not delta:
+                        continue
+                    full += delta
+                    buf += delta
+                    sents, buf = _drain_sentences(buf)
+                    if "[[" in full:
+                        held.extend(sents)
+                    else:
+                        for s in sents:
+                            yield ev({"t": "s", "text": s, "at": round(time.time() - started, 2)})
+                if buf.strip() and "[[" not in full:
+                    yield ev({"t": "s", "text": buf.strip()})
+            finally:
+                resp.close()
+        except Exception as e:  # surface mid-stream as an event, not a broken pipe
+            msg = str(e)[:300]
+            if full:
+                yield ev({"t": "done", "partial": True, "err": msg})
+            else:
+                yield ev({"t": "err", "msg": msg})
+            return
+        m = re.search(r"\[\[agent\]\]\s*(.+)", full)
+        if m:
+            cmd = m.group(1).strip()
+            _voice_hist_append("user", query)
+            _voice_hist_append("assistant", "[handed to ops agent: " + cmd + "]")
+            yield ev({"t": "agent", "cmd": cmd})
+            return
+        # "[[" appeared but no complete marker — flush the withheld sentences
+        for s in held:
+            yield ev({"t": "s", "text": s})
+        if buf.strip():
+            yield ev({"t": "s", "text": buf.strip()})
+        if not full.strip():
+            yield ev({"t": "err", "msg": "empty reply"})
+            return
+        _voice_hist_append("user", query)
+        _voice_hist_append("assistant", full)
+        yield ev({"t": "done"})
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/voice/reset")
+def voice_reset():
+    """Clear the voice-chat rolling history (conversation reset covers both legs)."""
+    had = VOICE_HISTORY_FILE.exists()
+    _voice_reset()
+    return {"ok": True, "cleared": had}
 
 
 # ---------------------------------------------------------------- advisor

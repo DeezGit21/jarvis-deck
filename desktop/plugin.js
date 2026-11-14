@@ -778,6 +778,82 @@ const ConsoleStore = {
     } finally {
       this.setBusy(false)
     }
+  },
+  // Realtime voice path (push-to-talk): streams /voice/chat — each sentence
+  // lands in the console AND is spoken while the rest is still generating.
+  // Action requests come back as {t:'agent',cmd} and are handed to send().
+  abortStream() {
+    if (this._streamAbort) { try { this._streamAbort.abort() } catch { /* ignore */ } }
+  },
+  async sendStream(text) {
+    const query = (text || '').trim()
+    if (!query || this.busy) return false
+    this.add({ role: 'you', text: query })
+    this.current = query
+    this.since = Date.now()
+    this.setBusy(true)
+    Tts.ack(ackLineFor(query))
+    OrbBus.set('thinking')
+    this._streamAbort = new AbortController()
+    let agentCmd = null
+    let full = ''
+    let added = false
+    try {
+      const res = await fetch('/api/plugins/agentos/voice/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+        signal: this._streamAbort.signal
+      })
+      if (!res.ok || !res.body) throw new Error('backend ' + res.status)
+      const reader = res.body.getReader()
+      const dec = new TextDecoder()
+      let buf = ''
+      const upsert = t => {
+        if (!added) { this.add({ role: 'jarvis', text: t }); added = true }
+        else this.msgs = this.msgs.map((m, i) => i === this.msgs.length - 1 ? { ...m, text: t } : m)
+        this.emit()
+      }
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        let nl
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim()
+          buf = buf.slice(nl + 1)
+          if (!line) continue
+          let ev
+          try { ev = JSON.parse(line) } catch { continue }
+          if (ev.t === 's') {
+            full += (full ? ' ' : '') + ev.text
+            upsert(full)
+            Tts.enqueueSpeak(ev.text)
+          } else if (ev.t === 'agent') {
+            agentCmd = ev.cmd
+          } else if (ev.t === 'err') {
+            upsert(full ? full + '\n[error] ' + ev.msg : '[error] ' + ev.msg)
+          }
+        }
+      }
+      if (!added && !agentCmd) upsert(full || '(no reply)')
+      this.lastDone = { cmd: query, secs: Math.max(1, Math.round((Date.now() - this.since) / 1000)), at: Date.now() }
+      return true
+    } catch (e) {
+      const msg = (e && e.name === 'AbortError') ? '[stopped]' : '[error] ' + ((e && e.message) || 'voice chat failed')
+      if (!added) this.add({ role: 'jarvis', text: msg })
+      else this.msgs = this.msgs.map((m, i) => i === this.msgs.length - 1 ? { ...m, text: m.text + ' ' + msg } : m)
+      this.emit()
+      OrbBus.set('idle')
+      return false
+    } finally {
+      this._streamAbort = null
+      this.setBusy(false)
+      if (agentCmd) {
+        Tts.stop()
+        ConsoleStore.send(agentCmd)
+      }
+    }
   }
 }
 
@@ -959,7 +1035,31 @@ const Tts = {
       window.speechSynthesis.speak(u)
     } catch { if (done) done() }
   },
+  // Streaming voice queue: sentence events from /voice/chat are enqueued and
+  // spoken back-to-back, so JARVIS starts talking while the reply is still
+  // streaming. Each sentence reuses _speakAsync (edge-tts streaming GET).
+  _speakQueue: [],
+  _speaking: false,
+  enqueueSpeak(text) {
+    if (!this.on()) return
+    const clean = String(text).trim()
+    if (!clean) return
+    this._speakQueue.push(clean)
+    this._pumpSpeak()
+  },
+  _pumpSpeak() {
+    if (this._speaking || !this._speakQueue.length) return
+    const text = this._speakQueue.shift()
+    this._speaking = true
+    OrbBus.set('speaking')
+    this._speakAsync(text, () => {
+      this._speaking = false
+      this._pumpSpeak()
+    })
+  },
   stop() {
+    this._speakQueue = []
+    this._speaking = false
     try { if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel() } catch { /* ignore */ }
     if (this._audio) { try { this._audio.pause(); this._audio.removeAttribute('src') } catch { /* ignore */ } this._audio = null }
     if (this._audioUrl) { try { URL.revokeObjectURL(this._audioUrl) } catch { /* ignore */ } this._audioUrl = null }
@@ -973,6 +1073,7 @@ const JarvisCtl = {
   openSpotlight: null,
   canVoice: false
 }
+if (typeof window !== 'undefined') window.__deckConsole = ConsoleStore
 
 // ------------------------------------------------------------ NeuralCore orb
 // jarvis-deck orb v2: plasma core + neural network combo.
@@ -3078,6 +3179,15 @@ function ConsoleCard({ compact = false }) {
     await ConsoleStore.send(query)
   }
 
+  // Voice turns take the realtime streaming path (speak-as-it-streams);
+  // typed input keeps the full agent path (/command).
+  async function sendVoice(text) {
+    const query = (text || '').trim()
+    if (!query) return
+    setInput('')
+    await ConsoleStore.sendStream(query)
+  }
+
   function startVoice() {
     if (!micOk || listening) return
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
@@ -3099,7 +3209,7 @@ function ConsoleCard({ compact = false }) {
     rec.onend = () => {
       setListening(false)
       OrbBus.set(ConsoleStore.busy ? 'thinking' : 'idle')
-      if (finalText.trim()) send(finalText.trim())
+      if (finalText.trim()) sendVoice(finalText.trim())
     }
     rec.onerror = () => {
       setListening(false)
@@ -4026,6 +4136,7 @@ function Spotlight({ open, onClose }) {
 // ------------------------------------------------------------ hero (compact status ribbon)
 
 function stopJarvisSpeech() {
+  ConsoleStore.abortStream()
   Tts.stop()
   if (OrbBus.state === 'speaking') OrbBus.set('idle')
 }

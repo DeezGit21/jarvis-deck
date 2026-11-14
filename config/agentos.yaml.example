@@ -27,6 +27,10 @@ tts:                                # server-side voice replies (optional)
   gemini_voice: "Charon"            # when provider: gemini (needs GEMINI_API_KEY)
   # fish_model: s2.1-pro-free       # when provider: fish (needs FISH_API_KEY)
 
+voice_chat:                         # realtime push-to-talk replies (optional)
+  model: z-ai/glm-5.3-flash         # fast OpenRouter model, streamed sentence-by-sentence
+                                    # (needs OPENROUTER_API_KEY in Settings -> API keys)
+
 remediation:                        # auto-restart scanner (optional, off by default)
   enabled: false
   scan_minutes: 5
