@@ -2909,6 +2909,25 @@ function AdvisorCard() {
   })
   const [genState, setGenState] = useState(null)
   const [busyId, setBusyId] = useState(null)
+  // accountability rows: 'fix' hands the item to Jarvis via the console and
+  // shows his live status in place (same pattern as ActionRow's mini-term)
+  const [fixId, setFixId] = useState(null)
+  const [, forceFix] = useState(0)
+  useEffect(() => {
+    if (!fixId) return undefined
+    return ConsoleStore.subscribe(() => forceFix(v => v + 1))
+  }, [fixId])
+  const lastFixReply = (() => {
+    const msgs = ConsoleStore.msgs.filter(m => m.role === 'jarvis')
+    return msgs.length ? msgs[msgs.length - 1].text : ''
+  })()
+  async function fixRow(r) {
+    haptic('tap')
+    setFixId(r.id)
+    await ConsoleStore.send(r.text)
+    // keep his status visible briefly, then dismiss
+    setTimeout(() => setFixId(cur => (cur === r.id ? null : cur)), 8000)
+  }
 
   async function generate() {
     setGenState('running')
@@ -2982,7 +3001,15 @@ function AdvisorCard() {
               children: r.escalated ? '⚠ ' + r.age_days + 'd ignored' : r.age_days + 'd'
             }),
             jsx('span', { className: 'min-w-0 flex-1 text-xs leading-snug text-(--ui-text-secondary)', children: r.text }),
+            fixId === r.id && jsx('div', { className: 'w-full ao-mini-term', children: lastFixReply || 'Handing to Jarvis — working…' }),
             jsxs('div', { className: 'ao-row-actions flex shrink-0 gap-1', children: [
+              jsx('button', {
+                disabled: busyId === r.id || fixId === r.id,
+                onClick: () => fixRow(r),
+                title: 'Hand this to Jarvis — he executes it and reports back here',
+                className: 'rounded border border-(--ui-stroke-secondary) px-1.5 py-0.5 font-mono text-[0.75rem] uppercase text-(--ui-accent) transition-colors hover:border-(--ui-accent) disabled:opacity-40',
+                children: fixId === r.id ? '…' : 'fix'
+              }),
               jsx('button', {
                 disabled: busyId === r.id,
                 onClick: () => act(r.id, 'done'),
@@ -5308,10 +5335,11 @@ function SettingsSection() {
 const WIDGETS = {
   hero:    { title: 'Jarvis',        span: 12, rows: 1, render: p => jsx(HeroWidget, p) },
   advisor: { title: 'Advisor',       span: 4,  rows: 5, render: () => jsx(AdvisorCard, {}) },
-  todos:   { title: 'Today',         span: 6,  rows: 4, render: () => jsx(TodosCard, {}) },
+  // todos moved to the Goals tab (D's call — declutter the overview, esp. mobile);
+  // TodosCard renders there directly, not as an overview grid widget
   brief:   { title: 'Brief',         span: 8,  rows: 4, render: () => jsx(BriefCard, {}) },
   status:  { title: 'Status',        span: 4,  rows: 4, render: () => jsx(StatusCard, {}) }, // rows must equal brief's — unequal row-mates make the grid stair-step
-  calendar:{ title: 'Calendar',     span: 6,  rows: 4, render: () => jsx(CalendarCard, {}) },
+  calendar:{ title: 'Calendar',     span: 12,  rows: 4, render: () => jsx(CalendarCard, {}) },
   mail:    { title: 'Inbox',        span: 4,  rows: 4, render: () => jsx(MailCard, {}) },
   telegram:{ title: 'Telegram',     span: 4,  rows: 4, render: () => jsx(TelegramCard, {}) },
   voice:   { title: 'Google Voice', span: 4,  rows: 4, render: () => jsx(VoiceCard, {}) },
@@ -5328,10 +5356,11 @@ const WIDGETS = {
 }
 
 // Row-packed so every grid row sums to exactly 12 cols — no dead space:
-// hero 12 | galaxy 8 + advisor 4 | brief 8 + status 4 | todos 6 + calendar 6 |
+// hero 12 | galaxy 8 + advisor 4 | brief 8 + status 4 | calendar 12 |
 // mail 4 + telegram 4 + voice 4 | automation 4 + memory 4 + metrics 4 |
 // agents 12 | console 12
-const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'brief', 'status', 'todos', 'calendar', 'mail', 'telegram', 'voice', 'automation', 'memory', 'metrics', 'agents', 'console']
+// (todos left the grid — it renders on the Goals tab now)
+const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'brief', 'status', 'calendar', 'mail', 'telegram', 'voice', 'automation', 'memory', 'metrics', 'agents', 'console']
 
 function defaultSizes() {
   const sizes = {}
@@ -6060,6 +6089,7 @@ function AgentosPage() {
         tab === 'money' && jsx(MoneySection, {}),
         tab === 'goals' && jsxs('div', { className: 'mx-auto w-full max-w-4xl flex flex-col gap-3', children: [
           jsx(WidgetBoundary, { children: jsx(GoalsCard, {}) }),
+          jsx(WidgetBoundary, { children: jsx(TodosCard, {}) }),
           jsx(WidgetBoundary, { children: jsx(ExportCard, {}) })
         ] }),
         tab === 'settings' && jsx(WidgetBoundary, { children: jsx(SettingsSection, {}) })
