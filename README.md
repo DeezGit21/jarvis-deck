@@ -41,6 +41,8 @@ style setup, but any backend that serves the same simple JSON routes works.
 | Calendar & Inbox | Google Calendar agenda (create + delete events inline), Gmail inbox — dual-account |
 | Telegram & Voice | Your bots' chats with inline reply, Google Voice texts / missed calls / voicemails with reply-by-email |
 | Notes | Quick-jot card — two-way sync with a Google Tasks list, so jots made on the deck show in the phone's Tasks app and vice versa (delete + edits + checked-off state propagate both ways) |
+| Speak mode | `Alt+5` (or **F**) — the orb fills the screen for TV/kiosk use; hold SPACE to talk, replies are spoken, `Esc` exits |
+| Agent model switcher | A dropdown on the console card switches the model Jarvis's agent turns run on (`hermes chat -m`), live, no restart |
 | Money | Live tickers (Yahoo/Binance, no login), Stripe balance & payouts, Webull positions, sparklines |
 | Workshop | Describe an object, the LLM emits structured scene JSON, deterministic 3D renderer builds it — edit parts by prompt |
 | HUD companion | Frameless transparent always-on-top Electron overlay (Alt+Space) — mini orb, down services, top tasks |
@@ -99,6 +101,7 @@ curl http://127.0.0.1:8785/healthz    # {"ok":true}
 | Gemini TTS / spoken briefs | `GEMINI_API_KEY` |
 | Calendar / Inbox / Google Voice | the `gws` CLI with your Google account |
 | Notes card | the `gws` CLI with a Google account (syncs to the account's "Jarvis Notes" Tasks list — configurable via `notes:` in agentos.yaml) |
+| Call escalation | `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` (Settings → API keys) and an `escalate:` block in agentos.yaml (`to` = the phone that gets called, `from` = a voice-capable Twilio number) |
 | Telegram / db metrics | SSH access to the host that holds them (agentos.yaml) |
 | Status card pings | `services:` list in agentos.yaml |
 
@@ -186,7 +189,10 @@ Shipped and working:
 - [x] Fresh-user launchers (`start.sh` / `start.cmd`), zero-config first boot
 - [x] Agent-adapter docs ([docs/ADAPTERS.md](docs/ADAPTERS.md))
 - [x] Standalone realtime-TTS demo in `tts/` (merged in from Jarvis-Real-Time-TTS) with local agent execution via `hermes -z` + spoken delegation acks
-- [x] Tagged [v0.3.0](https://github.com/DeezGit21/jarvis-deck/releases/tag/v0.3.0)
+- [x] Call escalation: Jarvis places a real phone call (Twilio) — pending-approval items can ring you from the Automation card, "call me about …" in the console triggers one on demand, and `escalate.auto_rem` auto-calls on new pending approvals (30-min per-service cooldown)
+- [x] Speak mode (`Alt+5` / `F`): orb fills the screen for TV/kiosk use — push-to-talk and spoken replies unchanged
+- [x] Agent model switcher: console dropdown switches the agent's model live (voice chat keeps its own fast model)
+- [x] Tagged [v0.4.0](https://github.com/DeezGit21/jarvis-deck/releases/tag/v0.4.0)
 
 ## License
 

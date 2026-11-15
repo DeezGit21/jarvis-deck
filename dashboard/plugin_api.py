@@ -1851,9 +1851,18 @@ def command(body: dict = Body(...)):
         # calendar / telegram / voice / inbox-triage card clicks — one completion each
         if card_cmd:
             return card_cmd
+    esc = _escalate_cmd(query)  # 'call me about …' / 'test the call escalation' — one Twilio call
+    if esc:
+        return esc
     query = _memory_block(query)
     sid = _deck_session_id()
     argv = ["hermes", "chat", "-Q", "--query-file", "-"]
+    try:
+        agent_model = str(_load_settings().get("agent_model") or "")
+    except Exception:  # noqa: BLE001 — settings unreadable must not break the agent
+        agent_model = ""
+    if agent_model:
+        argv += ["-m", agent_model]
     if sid:
         # conversation mode: resume the rolling deck session so Jarvis remembers
         # this chat's earlier turns (voice + typed both land here)
@@ -1868,8 +1877,7 @@ def command(body: dict = Body(...)):
                 DECK_SESSION_FILE.unlink()
             except OSError:
                 pass
-            p = subprocess.run(["hermes", "chat", "-Q", "--query-file", "-"],
-                               input=query, capture_output=True, text=True, timeout=600,
+            p = subprocess.run([*argv[:5]], input=query, capture_output=True, text=True, timeout=600,
                                creationflags=_NO_WINDOW)
             rc, out, err = p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
@@ -3818,6 +3826,17 @@ def _remediation_scan(manual: bool = False) -> dict:
             state["pending"].append(pend)
             actions.append({"service": name, "result": "pending_approval"})
             _tg_notify("⚠️ " + name + " is down and awaiting your approval to fix. Open the deck → // AUTOMATION.")
+            # call escalation: a phone CALL for anything that needs a human
+            # decision (gated by config + per-service cooldown so a flapping
+            # service can't ring the operator's phone all day)
+            try:
+                if _ESC_CFG.get("enabled") and _ESC_CFG.get("auto_rem"):
+                    last_call = float(_ESC_CALL_TS.get(name) or 0)
+                    if now - last_call >= _ESC_CALL_COOLDOWN_S:
+                        _ESC_CALL_TS[name] = now
+                        _escalate_call(name + " is down and awaiting your approval to fix.")
+            except Exception:  # noqa: BLE001 — escalation must never break the scan
+                pass
     # money connectors: read today's cached snapshots (cheap, no live calls).
     # reauth_needed = session expired → open the login console once, then stop
     # nagging (the MFA step is D's; the flag prevents relaunch loops).
@@ -3949,6 +3968,176 @@ def remediation_deny(body: dict = Body(...)):
     return {"ok": True, "id": pid}
 
 
+# ---------------------------------------------------------------- call escalation (Twilio voice)
+#
+# The "flag me when it matters" leg: Jarvis can place a real phone call that
+# speaks a short message (Twilio TTS) — for pending-approval escalations, or
+# on demand via "call me about X" in the console. Creds come from .env
+# (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN); targets from agentos.yaml:
+#
+#   escalate:
+#     enabled: true
+#     to: "+15551234567"      # the phone that gets called (the operator)
+#     from: "+15557654321"    # a voice-capable Twilio number
+#     auto_rem: true          # call on NEW pending-approval escalations
+
+_ESC_CFG = _CFG.get("escalate") if isinstance(_CFG.get("escalate"), dict) else {}
+_ESC_CALL_TS: dict[str, float] = {}  # per-service auto-call cooldown
+_ESC_CALL_COOLDOWN_S = 30 * 60       # one auto-call per service per 30 min
+_ESC_TWIML_VOICE = str(_ESC_CFG.get("voice") or "Polly.Matthew")
+
+
+def _twilio_creds() -> tuple[str, str]:
+    """Twilio SID+token: agentos .env first (Settings panel), then Hermes home .env."""
+    env = _read_env()
+    sid = env.get("TWILIO_ACCOUNT_SID") or os.environ.get("TWILIO_ACCOUNT_SID") or ""
+    tok = env.get("TWILIO_AUTH_TOKEN") or os.environ.get("TWILIO_AUTH_TOKEN") or ""
+    if sid and tok:
+        return sid, tok
+    try:
+        home_env = Path.home() / ".hermes" / ".env"
+        if home_env.exists():
+            for line in home_env.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = line.strip()
+                if line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                k, v = k.strip(), v.strip().strip('"').strip("'")
+                if k == "TWILIO_ACCOUNT_SID" and not sid:
+                    sid = v
+                elif k == "TWILIO_AUTH_TOKEN" and not tok:
+                    tok = v
+    except OSError:
+        pass
+    return sid, tok
+
+
+def _twilio_api(sid: str, tok: str, path: str, data: dict | None = None) -> dict:
+    auth = base64.b64encode((sid + ":" + tok).encode()).decode()
+    url = "https://api.twilio.com/2010-04-01/Accounts/" + sid + "/" + path
+    if data is None:
+        req = urllib.request.Request(url)
+    else:
+        req = urllib.request.Request(url, data=urllib.parse.urlencode(data).encode(), method="POST")
+    req.add_header("Authorization", "Basic " + auth)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode("utf-8", "replace"))
+            msg = str((body.get("message") or "") + " " + str(body.get("code") or "")).strip()
+        except Exception:  # noqa: BLE001
+            msg = str(e)
+        raise RuntimeError("twilio: " + msg[:200]) from None
+
+
+def _escalate_call(message: str, to: str = "", frm: str = "") -> dict:
+    sid, tok = _twilio_creds()
+    if not sid or not tok:
+        raise HTTPException(status_code=502, detail=(
+            "Twilio not configured — add TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in Settings → API keys"))
+    cfg = _ESC_CFG if isinstance(_ESC_CFG, dict) else {}
+    to = (to or str(cfg.get("to") or "")).strip()
+    frm = (frm or str(cfg.get("from") or cfg.get("from_") or "")).strip()
+    if not to:
+        raise HTTPException(status_code=502, detail="escalate.to missing in agentos.yaml (who gets called)")
+    if not frm:
+        raise HTTPException(status_code=502, detail="escalate.from missing in agentos.yaml (your Twilio number)")
+    msg = " ".join(str(message or "").split())[:600] or "Something needs your attention."
+    safe = (msg.replace("&", "and").replace("<", " ").replace(">", " "))
+    say = ('<Response><Say voice="' + _ESC_TWIML_VOICE + '">This is Jarvis. ' + safe + '</Say>'
+           '<Pause length="1"/>'
+           '<Say voice="' + _ESC_TWIML_VOICE + '">That message again. ' + safe + '</Say></Response>')
+    call = _twilio_api(sid, tok, "Calls.json", {"To": to, "From": frm, "Twiml": say})
+    call_sid = str(call.get("sid") or "")
+    # read-back: poll the call twice so the reply reflects Twilio's real state
+    status = str(call.get("status") or "queued")
+    for _ in range(2):
+        time.sleep(3)
+        try:
+            status = str(_twilio_api(sid, tok, "Calls/" + call_sid + ".json").get("status") or status)
+        except Exception:  # noqa: BLE001 — the call is placed either way
+            pass
+    return {"ok": True, "sid": call_sid, "to": to, "status": status,
+            "verified": status in ("queued", "ringing", "in-progress", "completed")}
+
+
+@router.get("/escalate/config")
+def escalate_config():
+    sid, tok = _twilio_creds()
+    cfg = _ESC_CFG if isinstance(_ESC_CFG, dict) else {}
+    return {"ok": True, "enabled": bool(cfg.get("enabled")), "auto_rem": bool(cfg.get("auto_rem")),
+            "to_set": bool(cfg.get("to")), "from_set": bool(cfg.get("from") or cfg.get("from_")),
+            "creds_set": bool(sid and tok), "voice": _ESC_TWIML_VOICE}
+
+
+@router.post("/escalate/call")
+def escalate_call(body: dict = Body(...)):
+    return _escalate_call(str(body.get("message") or ""), to=str(body.get("to") or ""))
+
+
+_CALL_RE = re.compile(
+    r"^(?:jarvis[,!\s]+)?(?:please\s+)?(?:call|phone|ring)\s+me\b[,\s]*(?:about|on|regarding|with|re:?)?\s*(.*)$",
+    re.IGNORECASE | re.DOTALL)
+_TEST_CALL_RE = re.compile(r"\b(?:make|run|do|test)\b.{0,24}\btest\s+call\b|\btest\s+the\s+(?:call\s+)?escalation\b",
+                           re.IGNORECASE)
+
+
+def _escalate_cmd(query: str) -> dict | None:
+    """/command fastpath: 'call me about …' / 'test the call escalation' → one Twilio call."""
+    m = _CALL_RE.match(query.strip())
+    msg = ""
+    if m and (m.group(1) or "").strip():
+        msg = m.group(1).strip()
+    elif _TEST_CALL_RE.search(query):
+        msg = "Escalation call path test. If you can hear this, Jarvis can reach you by phone."
+    else:
+        return None
+    try:
+        r = _escalate_call(msg)
+        return {"ok": True, "fastpath": "escalate",
+                "reply": "Calling you now, sir — " + (msg[:120] or "test call") +
+                         " (call status: " + r["status"] + ").",
+                "speech": "Calling you now, sir.", "date": _local_date()}
+    except (HTTPException, RuntimeError) as e:
+        detail = e.detail if isinstance(e, HTTPException) else str(e)
+        return {"ok": False, "fastpath": "escalate", "reply": "Call failed: " + str(detail),
+                "date": _local_date()}
+
+
+# ---------------------------------------------------------------- agent model switcher
+#
+# The console's agent turn runs `hermes chat`; the -m flag overrides the model
+# for that run (Hermes resolves the provider from the model id). The selection
+# lives in settings.json so it survives restarts; empty = the profile default.
+
+_MODEL_SWITCH_CFG = _CFG.get("model_switcher") if isinstance(_CFG.get("model_switcher"), dict) else {}
+_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,119}$")
+
+
+@router.get("/model")
+def model_get():
+    try:
+        model = str(_load_settings().get("agent_model") or "")
+    except Exception:  # noqa: BLE001
+        model = ""
+    models = [str(m).strip() for m in (_MODEL_SWITCH_CFG.get("models") or []) if str(m).strip()]
+    return {"ok": True, "model": model, "models": models,
+            "default": str(_MODEL_SWITCH_CFG.get("default") or "")}
+
+
+@router.post("/model")
+def model_set(body: dict = Body(...)):
+    model = str((body or {}).get("model") or "").strip()
+    if model and not _MODEL_RE.match(model):
+        raise HTTPException(status_code=400, detail="invalid model id")
+    cur = _load_settings()
+    cur["agent_model"] = model
+    SETTINGS_FILE.write_text(json.dumps(cur, indent=1), encoding="utf-8")
+    return {"ok": True, "model": model}
+
+
 # ---------------------------------------------------------------- export / import (encrypted bundles)
 
 @router.get("/export")
@@ -4001,6 +4190,7 @@ _SETTINGS_KEYS = {
     "OPENROUTER_API_KEY": "OpenRouter",
     "STRIPE_SECRET_KEY": "Stripe — payments",
     "TWILIO_AUTH_TOKEN": "Twilio — SMS/voice",
+    "TWILIO_ACCOUNT_SID": "Twilio — SMS/voice (account SID)",
     "SENDGRID_API_KEY": "SendGrid — email",
     "ALPACA_API_KEY": "Alpaca — trading (key id)",
     "ALPACA_SECRET_KEY": "Alpaca — trading (secret)",

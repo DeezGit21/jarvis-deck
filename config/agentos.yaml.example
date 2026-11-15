@@ -37,3 +37,17 @@ remediation:                        # auto-restart scanner (optional, off by def
   cooldown_minutes: 15
   max_auto_per_hour: 4
   auto: {}                          # service-name -> restart command (allowlist)
+
+escalate:                           # phone-call escalation via Twilio (optional)
+  enabled: true                     # master switch
+  auto_rem: true                    # also call when a NEW pending approval is queued
+  to: "+15551234567"                # the phone that gets called (the operator)
+  from: "+15557654321"              # a voice-capable Twilio number you own
+  voice: Polly.Matthew              # Twilio TTS voice for the call
+                                    # creds: TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN (Settings -> API keys)
+
+model_switcher:                     # console dropdown: models `hermes chat -m` accepts
+  models:
+    - google/gemini-2.5-flash
+    - google/gemini-2.5-pro
+

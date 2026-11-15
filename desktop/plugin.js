@@ -55,6 +55,11 @@ const CSS = `
 /* --- full-viewport modes (Alt+1..4) + HUD companion --- */
 .ao-mode { position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column;
   background: color-mix(in srgb, #060a10 90%, transparent); backdrop-filter: blur(18px); }
+
+/* --- speak mode (Alt+5 / F): the orb fills the screen, push-to-talk unchanged --- */
+.ao-speak-orb { display: flex; align-items: center; justify-content: center;
+  animation: ao-speak-in 0.5s ease-out both; }
+@keyframes ao-speak-in { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: none; } }
 .ao-mode-bar { display: flex; align-items: center; gap: 10px; padding: 10px 18px;
   border-bottom: 1px solid var(--ui-stroke-secondary); flex-shrink: 0; }
 .ao-hud { position: fixed; left: 50%; top: 14px; transform: translateX(-50%);
@@ -3233,6 +3238,22 @@ function ConsoleCard({ compact = false }) {
   const busy = ConsoleStore.busy
   const [input, setInput] = useState('')
   const [listening, setListening] = useState(false)
+  // Agent-model switcher: what `hermes chat` runs for console agent turns
+  // (GET/POST /model; empty = the profile default). Voice streaming keeps its
+  // own fast model — this switcher is about the AGENT, not the voice chat.
+  const modelQ = useQuery({ queryKey: ['agentos', 'model'], queryFn: () => REST('/model') })
+  const [modelBusy, setModelBusy] = useState(false)
+  async function setModel(m) {
+    setModelBusy(true)
+    try {
+      await REST('/model', { method: 'POST', body: { model: m } })
+      await modelQ.refetch()
+      ConsoleStore.add({ role: 'jarvis', text: m ? 'Agent model set to ' + m + ' — next command runs on it.' : 'Agent model reset to the profile default.' })
+    } catch (e) {
+      ConsoleStore.add({ role: 'jarvis', text: 'Model switch failed: ' + (e && e.message ? e.message : 'unknown error') })
+    }
+    setModelBusy(false)
+  }
   const [micOk] = useState(() => typeof window !== 'undefined' &&
     !!(window.SpeechRecognition || window.webkitSpeechRecognition))
   const recRef = useRef(null)
@@ -3439,6 +3460,22 @@ function ConsoleCard({ compact = false }) {
         disabled: busy || !input.trim(),
         className: 'shrink-0 rounded-md border border-(--ui-stroke-secondary) px-3 py-2 text-xs uppercase tracking-wider text-(--ui-text-secondary) transition-colors enabled:hover:border-(--ui-accent) enabled:hover:text-(--ui-accent) disabled:opacity-40',
         children: busy ? '…' : 'Run'
+      }),
+      // agent-model switcher (console agent turns run hermes chat -m <model>)
+      !compact && modelQ.data && jsx('select', {
+        value: modelQ.data.model || '',
+        onChange: e => setModel(e.target.value),
+        disabled: modelBusy,
+        'aria-label': 'Agent model',
+        title: 'Agent model — the model Jarvis runs for console agent turns (voice chat keeps its own fast model)',
+        className: 'max-w-[11rem] shrink-0 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) px-1.5 py-2 font-mono text-xs text-(--ui-text-secondary) outline-none transition-colors hover:border-(--ui-accent) focus:border-(--ui-accent)',
+        children: [
+          jsx('option', { value: '', children: 'model: profile default' }),
+          modelQ.data.model && !(modelQ.data.models || []).includes(modelQ.data.model)
+            ? jsx('option', { value: modelQ.data.model, children: modelQ.data.model })
+            : null,
+          ...(modelQ.data.models || []).map(m => jsx('option', { value: m, children: m }, m))
+        ]
       }),
       // new conversation — drops the rolling backend session so Jarvis forgets
       // this chat's turns (typed AND voice share the same session)
@@ -4131,7 +4168,8 @@ const SLASH_COMMANDS = [
   { cmd: '/mode brief', label: 'View: Briefing (Alt+1)', mode: 'brief' },
   { cmd: '/mode console', label: 'View: Execution console (Alt+2)', mode: 'console' },
   { cmd: '/mode graph', label: 'View: Neural graph (Alt+3)', mode: 'graph' },
-  { cmd: '/mode hud', label: 'View: HUD overlay (Alt+4)', mode: 'hud' }
+  { cmd: '/mode hud', label: 'View: HUD overlay (Alt+4)', mode: 'hud' },
+  { cmd: '/mode speak', label: 'View: Speak mode — orb fills the screen (Alt+5)', mode: 'speak' }
 ]
 
 function Spotlight({ open, onClose }) {
@@ -4375,7 +4413,7 @@ function HeroWidget({ onOpenSpotlight, onOpenServices }) {
       jsxs('div', { className: 'ao-hero-actions flex flex-wrap items-center gap-1.5 ml-auto', children: [
         // full-viewport modes: Alt+1..4 (brief / console / graph / hud)
         jsxs('span', { className: 'ao-mode-sw flex items-center gap-1 mr-1', children: [
-          ['brief', '1'], ['console', '2'], ['graph', '3'], ['hud', '4']
+          ['brief', '1'], ['console', '2'], ['graph', '3'], ['hud', '4'], ['speak', '5']
         ].map(([m, k]) => jsx('button', {
           type: 'button',
           className: cn('ao-kbd', (typeof window !== 'undefined' && window.__deckMode && window.__deckMode.mode === m) && 'border-(--ui-accent) text-(--ui-accent)'),
@@ -5055,6 +5093,25 @@ function AutomationCard() {
     setBusy('')
   }
 
+  // CALL ME: phone escalation for a pending approval (POST /escalate/call —
+  // Twilio places a real call that speaks the message). Status shows IN PLACE.
+  const [callNote, setCallNote] = useState(null)
+  async function callMe(p) {
+    setBusy('call' + p.id)
+    const start = Date.now()
+    try {
+      const r = await REST('/escalate/call', { method: 'POST', body: {
+        message: p.service + ' is down and awaiting your approval to fix. Open the deck automation card.' } })
+      setCallNote({ id: p.id, ok: true,
+        text: '📞 calling you — Twilio status ' + (r.status || 'unknown') + ' (' +
+              Math.max(1, Math.round((Date.now() - start) / 1000)) + 's)' })
+    } catch (e) {
+      setCallNote({ id: p.id, ok: false, text: 'call failed: ' + (e && e.message ? e.message : 'unknown') })
+    }
+    setBusy('')
+    setTimeout(() => setCallNote(n => (n && n.id === p.id ? null : n)), 10000)
+  }
+
   return jsx(AoCard, {
     label: 'automation - self-healing',
     delay: 150,
@@ -5100,11 +5157,20 @@ function AutomationCard() {
             }),
             jsx('button', {
               type: 'button', className: 'ao-btn', disabled: busy !== '',
+              onClick: () => callMe(p),
+              children: busy === 'call' + p.id ? 'calling…' : 'CALL ME'
+            }),
+            jsx('button', {
+              type: 'button', className: 'ao-btn', disabled: busy !== '',
               onClick: () => act('/remediation/deny', { id: p.id }, 'deny' + p.id),
               children: 'DENY'
             }),
             jsx('span', { className: 'ml-auto font-mono text-[12px] text-(--ui-text-quaternary)', children: p.cmd ? 'restart cmd ready' : 'agent will diagnose' })
-          ] })
+          ] }),
+          callNote && callNote.id === p.id && jsx('div', {
+            className: 'mt-1 font-mono text-[12px] ' + (callNote.ok ? 'text-[#3fb950]' : 'text-[#f85149]'),
+            children: callNote.text
+          })
         ]
       }, p.id)),
       jsx('div', { className: 'ao-label', children: 'activity' }),
@@ -6264,7 +6330,7 @@ if (typeof window !== 'undefined') {
     window.__deckModeInit = true
     try {
       const m = new URLSearchParams(window.location.search).get('mode')
-      if (m && ['brief', 'console', 'graph', 'hud'].includes(m)) ModeStore.mode = m
+      if (m && ['brief', 'console', 'graph', 'hud', 'speak'].includes(m)) ModeStore.mode = m
     } catch { /* ignore */ }
   }
 }
@@ -6543,11 +6609,46 @@ function MiniOrb({ size = 46 }) {
   })
 }
 
+// ------------------------------------------------------------ speak mode (Alt+5 / F)
+// The TV/kiosk view: the orb fills the screen, captions read large, and
+// push-to-talk keeps working (the space handlers are app-global). Replies are
+// spoken through TTS as usual — this mode is pure presentation.
+
+function SpeakMode() {
+  const st = useBusyStatus()
+  const listening = OrbBus.state === 'listening'
+  const speaking = OrbBus.state === 'speaking'
+  const msgs = ConsoleStore.msgs
+  const last = role => { for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === role) return msgs[i].text; return null }
+  const clip = s => (s.length > 220 ? s.slice(0, 218).trimEnd() + '…' : s)
+  const size = Math.max(280, Math.min(520, Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.42)))
+  const phase = listening ? 'listening — hold SPACE, release to send'
+    : st.busy ? (st.phase === 'hermes' ? 'Hermes executing · ' + fmtSecs(st.secs) : 'thinking · ' + fmtSecs(st.secs))
+    : speaking ? 'speaking'
+    : 'idle — hold SPACE to talk'
+  return jsxs('div', { className: 'ao-mode', children: [
+    jsxs('div', { className: 'ao-mode-bar', children: [
+      jsx('span', { className: 'ao-wordmark text-sm font-semibold text-(--ui-accent) ao-hero-glow', children: '// SPEAK MODE' }),
+      jsx('span', { className: 'font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: 'the orb fills the screen — talk, it answers out loud' }),
+      jsx('span', { className: 'ml-auto font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: 'esc to exit' }),
+      jsx('button', { type: 'button', className: 'ao-wbtn', title: 'Exit speak mode', onClick: () => ModeStore.set(null), children: '✕' })
+    ] }),
+    jsxs('div', { className: 'flex min-h-0 flex-1 flex-col items-center justify-center gap-5 px-6', children: [
+      jsx('div', { className: 'ao-speak-orb', children: jsx(Orb3D, { size, ariaLabel: 'JARVIS orb — speak mode' }) }),
+      jsx('div', { className: 'font-mono text-sm text-(--ui-text-secondary)', children: phase }),
+      last('you') && jsx('div', { className: 'max-w-[80ch] text-center text-base text-(--ui-text-tertiary)', children: clip(last('you')) }),
+      last('jarvis') && jsx('div', { className: 'max-w-[80ch] text-center text-lg text-(--ui-text-primary)', children: clip(last('jarvis')) }),
+      jsx('div', { className: 'font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: 'hold SPACE to talk · replies are spoken' })
+    ] })
+  ] })
+}
+
 function ModeOverlay({ mode }) {
   if (mode === 'brief') return jsx(BriefingMode, {})
   if (mode === 'console') return jsx(ConsoleMode, {})
   if (mode === 'graph') return jsx(GraphMode, {})
   if (mode === 'hud') return jsx(HudOverlay, {})
+  if (mode === 'speak') return jsx(SpeakMode, {})
   return null
 }
 
@@ -6616,14 +6717,21 @@ function AgentosPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // Alt+1..4 full-viewport modes; Esc exits the active mode.
+  // Alt+1..5 full-viewport modes; Esc exits the active mode. F toggles speak
+  // mode too (the TV/kiosk key) — only outside a text field.
   useEffect(() => {
-    const map = { 1: 'brief', 2: 'console', 3: 'graph', 4: 'hud' }
+    const map = { 1: 'brief', 2: 'console', 3: 'graph', 4: 'hud', 5: 'speak' }
     const onKey = e => {
       if (e.altKey && !e.ctrlKey && !e.metaKey && map[e.key]) {
         e.preventDefault()
         haptic('tap')
         ModeStore.toggle(map[e.key])
+      } else if ((e.key === 'f' || e.key === 'F') && !e.altKey && !e.ctrlKey && !e.metaKey) {
+        const t = e.target
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+        e.preventDefault()
+        haptic('tap')
+        ModeStore.toggle('speak')
       } else if (e.key === 'Escape' && ModeStore.mode) {
         ModeStore.set(null)
       }
