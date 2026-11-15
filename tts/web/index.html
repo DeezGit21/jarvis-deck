@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis — Real Time TTS</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="shell">
+  <header>
+    <h1>J.A.R.V.I.S.</h1>
+    <div class="sub">realtime voice · streaming TTS</div>
+    <span id="state" class="pill idle">idle</span>
+  </header>
+
+  <section id="console" class="console" aria-live="polite"></section>
+
+  <div class="hint" id="micHint">checking microphone support…</div>
+
+  <footer class="bar">
+    <button id="micBtn" class="mic" disabled title="Hold to talk">🎙 hold SPACE to talk</button>
+    <form id="typeForm">
+      <input id="typeInput" placeholder="…or type it, sir" autocomplete="off">
+      <button type="submit">Send</button>
+    </form>
+    <button id="stopBtn" class="stop" title="Esc">■ stop</button>
+  </footer>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

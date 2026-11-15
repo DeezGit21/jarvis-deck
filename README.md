@@ -136,7 +136,25 @@ Shipped and working:
 - [x] HUD companion overlay (`npm run hud`)
 - [x] Fresh-user launchers (`start.sh` / `start.cmd`), zero-config first boot
 - [x] Agent-adapter docs ([docs/ADAPTERS.md](docs/ADAPTERS.md))
+- [x] Standalone realtime-TTS demo in `tts/` (merged in from Jarvis-Real-Time-TTS) with local agent execution via `hermes -z` + spoken delegation acks
 - [x] Tagged [v0.1.0](https://github.com/DeezGit21/jarvis-deck/releases/tag/v0.1.0)
+
+## Standalone voice demo (`tts/`)
+
+The realtime-TTS loop was originally its own repo
+([DeezGit21/Jarvis-Real-Time-TTS](https://github.com/DeezGit21/Jarvis-Real-Time-TTS),
+now archived — that link redirects here). It lives in [`tts/`](tts/README.md)
+as a fully self-contained demo: push-to-talk → OpenRouter streaming →
+sentence-by-sentence streaming TTS on its own port, no dashboard required.
+Requests that need a real action hand off to the Hermes one-shot agent
+(`hermes -z`) — Jarvis says *"Delegating to Hermes Agent, sir."* while it
+works, then speaks a summary of the result.
+
+```bash
+cd tts
+pip install -r requirements.txt
+python server.py          # http://127.0.0.1:8899
+```
 
 ## License
 
