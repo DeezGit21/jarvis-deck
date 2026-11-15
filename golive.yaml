@@ -1,0 +1,9 @@
+# golive config — providers you chose and how they connect. No secrets live here; safe to commit.
+version: 1
+stack:
+  hosting: netlify
+  dns: cloudflare
+targets:
+  - preview
+  - production
+domain: jarvis.deezgit21.app

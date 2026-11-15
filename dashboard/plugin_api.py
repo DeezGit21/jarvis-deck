@@ -210,7 +210,7 @@ def _gws_accounts() -> list[dict]:
     cfg = _CFG.get("gws") if isinstance(_CFG.get("gws"), dict) else {}
     out = []
     for a in (cfg.get("accounts") or [{"name": "personal", "config_dir": ""},
-                                      {"name": "business", "config_dir": str(HOME / ".config" / "gws-second")}]):
+                                      {"name": "business", "config_dir": ""}]):
         if not isinstance(a, dict) or not a.get("name"):
             continue
         out.append({"name": str(a["name"]), "config_dir": str(a.get("config_dir") or "")})

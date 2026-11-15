@@ -2614,10 +2614,10 @@ function VoiceCard() {
       children: [
         jsx(AppOpenBtn, {
           label: '\u2197 voice',
-          // open Google Voice under the BUSINESS account (Arctic AZ HVAC gmail)
-          // so the displayed GV number is the company line, not the personal one
-          url: 'https://voice.google.com?authuser=' + encodeURIComponent(voiceEmailOf('business') || 'business@example.com'),
-          title: 'Open Google Voice (Arctic AZ business line) in the browser'
+          // open Google Voice under the second (business) gws account when one
+          // is configured, so the displayed GV number is the company line
+          url: 'https://voice.google.com?authuser=' + encodeURIComponent(voiceEmailOf(accounts[1] && accounts[1].name) || voiceEmailOf(accounts[0] && accounts[0].name)),
+          title: 'Open Google Voice in the browser'
         }),
         jsx('button', {
           type: 'button',
@@ -2630,7 +2630,7 @@ function VoiceCard() {
     children: jsxs(Fragment, {
       children: [
         jsx('div', { className: 'mb-1 text-[0.75rem] text-(--ui-text-quaternary)',
-          children: 'business line \u00b7 ((602) 555-0151 \u00b7 business@example.com \u2014 rows from both numbers are tagged by account' }),
+          children: 'texts and calls from your linked Google Voice lines \u2014 rows tagged by account' }),
         q.isLoading && jsxs('div', { className: 'space-y-3', children: [
           jsx(Skel, { h: '.9rem' }), jsx(Skel, { h: '.9rem', delay: 120 }), jsx(Skel, { h: '.9rem', delay: 240 })
         ] }),

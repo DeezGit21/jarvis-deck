@@ -1,7 +1,5 @@
 # JARVIS Deck
 
-![demo](docs/demo.gif)
-
 An open-source, standalone **control deck for your personal agent** — a single
 dark dashboard with a plasma neural orb, a memory galaxy of everything your
 agent is working on, and a realtime voice loop: hold a button, talk, and

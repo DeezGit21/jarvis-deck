@@ -1,0 +1,874 @@
+{
+  "ok": true,
+  "strict": false,
+  "browserSkipped": false,
+  "lint": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 6,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "gsap_repeated_fromto_without_baseline",
+        "severity": "warning",
+        "message": "2 tl.fromTo() calls target \"proxy (unresolved DOM association)\" with no stable baseline. The last-authored fromTo \"from\" values become the element's resting state for any seek before the first tween actually runs, because GSAP applies fromTo from-values at authoring time (immediateRender), not at tween position.",
+        "selector": "proxy (unresolved DOM association)",
+        "dataAttributes": {},
+        "sourceFile": "D:\\Dev\\PROJECTS\\jarvis-deck\\brag-output\\composition\\index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Add `immediateRender: false` to every fromTo except the earliest-positioned one (at 0.15s), so pre-first-tween seeks keep its \"from\" values. A hiding `tl.set(..., 0)` baseline trips gsap_timeline_set_initial_hide, and a `gsap.set` authored before the fromTo calls is overwritten by them."
+      },
+      {
+        "code": "nested_structure_needs_subcomposition",
+        "severity": "warning",
+        "message": "<div id=\"scene1\"> is a timeline element that contains nested <div id=\"seq1\">. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+        "selector": "#scene1",
+        "dataAttributes": {},
+        "sourceFile": "D:\\Dev\\PROJECTS\\jarvis-deck\\brag-output\\composition\\index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Move <div id=\"scene1\"> and its contents into a sub-composition file and mount it with data-composition-src."
+      },
+      {
+        "code": "nested_structure_needs_subcomposition",
+        "severity": "warning",
+        "message": "<div id=\"scene2\"> is a timeline element that contains nested <div id=\"shot2a\">. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+        "selector": "#scene2",
+        "dataAttributes": {},
+        "sourceFile": "D:\\Dev\\PROJECTS\\jarvis-deck\\brag-output\\composition\\index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Move <div id=\"scene2\"> and its contents into a sub-composition file and mount it with data-composition-src."
+      },
+      {
+        "code": "nested_structure_needs_subcomposition",
+        "severity": "warning",
+        "message": "<div id=\"scene3\"> is a timeline element that contains nested <div id=\"tab3a\">. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+        "selector": "#scene3",
+        "dataAttributes": {},
+        "sourceFile": "D:\\Dev\\PROJECTS\\jarvis-deck\\brag-output\\composition\\index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Move <div id=\"scene3\"> and its contents into a sub-composition file and mount it with data-composition-src."
+      },
+      {
+        "code": "nested_structure_needs_subcomposition",
+        "severity": "warning",
+        "message": "<div id=\"scene4\"> is a timeline element that contains nested <div id=\"shot4\">. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+        "selector": "#scene4",
+        "dataAttributes": {},
+        "sourceFile": "D:\\Dev\\PROJECTS\\jarvis-deck\\brag-output\\composition\\index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Move <div id=\"scene4\"> and its contents into a sub-composition file and mount it with data-composition-src."
+      },
+      {
+        "code": "nested_structure_needs_subcomposition",
+        "severity": "warning",
+        "message": "<div id=\"scene5\"> is a timeline element that contains nested <div id=\"seq5\">. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+        "selector": "#scene5",
+        "dataAttributes": {},
+        "sourceFile": "D:\\Dev\\PROJECTS\\jarvis-deck\\brag-output\\composition\\index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Move <div id=\"scene5\"> and its contents into a sub-composition file and mount it with data-composition-src."
+      }
+    ],
+    "filesScanned": 1
+  },
+  "runtime": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 9,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-boot\" is 0.10s but its slot (data-duration) is 1.00s — the slot is shortened to the media length when rendered. Set data-duration to ~0.10s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "main",
+          "data-start": "0",
+          "data-duration": "25.5",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-motion-blur": "on"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-hook\" is 0.12s but its slot (data-duration) is 1.40s — the slot is shortened to the media length when rendered. Set data-duration to ~0.12s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "main",
+          "data-start": "0",
+          "data-duration": "25.5",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-motion-blur": "on"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-cut2\" is 0.11s but its slot (data-duration) is 0.60s — the slot is shortened to the media length when rendered. Set data-duration to ~0.11s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "main",
+          "data-start": "0",
+          "data-duration": "25.5",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-motion-blur": "on"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-cut2b\" is 0.05s but its slot (data-duration) is 0.60s — the slot is shortened to the media length when rendered. Set data-duration to ~0.05s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "main",
+          "data-start": "0",
+          "data-duration": "25.5",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-motion-blur": "on"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-tab1\" is 0.11s but its slot (data-duration) is 0.60s — the slot is shortened to the media length when rendered. Set data-duration to ~0.11s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "main",
+          "data-start": "0",
+          "data-duration": "25.5",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-motion-blur": "on"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-tab2\" is 0.05s but its slot (data-duration) is 0.60s — the slot is shortened to the media length when rendered. Set data-duration to ~0.05s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "main",
+          "data-start": "0",
+          "data-duration": "25.5",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-motion-blur": "on"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-tab3\" is 0.11s but its slot (data-duration) is 0.60s — the slot is shortened to the media length when rendered. Set data-duration to ~0.11s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "main",
+          "data-start": "0",
+          "data-duration": "25.5",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-motion-blur": "on"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-cmd\" is 0.10s but its slot (data-duration) is 0.60s — the slot is shortened to the media length when rendered. Set data-duration to ~0.10s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "main",
+          "data-start": "0",
+          "data-duration": "25.5",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-motion-blur": "on"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      },
+      {
+        "code": "clip_media_fit",
+        "severity": "warning",
+        "message": "Audio \"sfx-voice\" is 0.05s but its slot (data-duration) is 0.60s — the slot is shortened to the media length when rendered. Set data-duration to ~0.05s if that isn't intended.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {
+          "data-composition-id": "main",
+          "data-start": "0",
+          "data-duration": "25.5",
+          "data-width": "1920",
+          "data-height": "1080",
+          "data-motion-blur": "on"
+        },
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "time": 0
+      }
+    ]
+  },
+  "layout": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 4,
+    "findings": [
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 1.417,
+        "selector": "#seq1",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -19.2,
+          "top": -10.8,
+          "right": 1939.2,
+          "bottom": 1090.8,
+          "width": 1958.4,
+          "height": 1101.6
+        },
+        "containerSelector": "#scene1",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 0,
+          "top": 0,
+          "right": 1920,
+          "bottom": 1080,
+          "width": 1920,
+          "height": 1080
+        },
+        "overflow": {
+          "left": 19.2,
+          "right": 19.2,
+          "top": 10.8,
+          "bottom": 10.8
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -19.2,
+          "y": -10.8,
+          "width": 1958.4,
+          "height": 1101.6
+        },
+        "firstSeen": 1.417,
+        "lastSeen": 1.417,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          1.417
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 4.25,
+        "selector": "#shot2a",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -45.7,
+          "top": -25.7,
+          "right": 1965.7,
+          "bottom": 1105.7,
+          "width": 2011.39,
+          "height": 1131.41
+        },
+        "containerSelector": "#scene2",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 0,
+          "top": 0,
+          "right": 1920,
+          "bottom": 1080,
+          "width": 1920,
+          "height": 1080
+        },
+        "overflow": {
+          "left": 45.7,
+          "right": 45.7,
+          "top": 25.7,
+          "bottom": 25.7
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -45.7,
+          "y": -25.7,
+          "width": 2011.39,
+          "height": 1131.41
+        },
+        "firstSeen": 4.25,
+        "lastSeen": 7.083,
+        "occurrences": 2,
+        "heldMs": 0,
+        "times": [
+          4.25,
+          7.083
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 7.083,
+        "selector": "#shot2b",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -46.37,
+          "top": -26.08,
+          "right": 1966.37,
+          "bottom": 1106.08,
+          "width": 2012.74,
+          "height": 1132.16
+        },
+        "containerSelector": "#scene2",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 0,
+          "top": 0,
+          "right": 1920,
+          "bottom": 1080,
+          "width": 1920,
+          "height": 1080
+        },
+        "overflow": {
+          "left": 46.37,
+          "right": 46.37,
+          "top": 26.08,
+          "bottom": 26.08
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -46.37,
+          "y": -26.08,
+          "width": 2012.74,
+          "height": 1132.16
+        },
+        "firstSeen": 7.083,
+        "lastSeen": 7.083,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          7.083
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 12.75,
+        "selector": "#shot4",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -92.16,
+          "top": -51.84,
+          "right": 2012.16,
+          "bottom": 1131.84,
+          "width": 2104.32,
+          "height": 1183.68
+        },
+        "containerSelector": "#scene4",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 0,
+          "top": 0,
+          "right": 1920,
+          "bottom": 1080,
+          "width": 1920,
+          "height": 1080
+        },
+        "overflow": {
+          "left": 92.16,
+          "right": 92.16,
+          "top": 51.84,
+          "bottom": 51.84
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -92.16,
+          "y": -51.84,
+          "width": 2104.32,
+          "height": 1183.68
+        },
+        "firstSeen": 12.75,
+        "lastSeen": 15.583,
+        "occurrences": 2,
+        "heldMs": 0,
+        "times": [
+          12.75,
+          15.583
+        ]
+      }
+    ],
+    "duration": 25.5,
+    "samples": [
+      1.417,
+      4.25,
+      7.083,
+      9.917,
+      12.75,
+      15.583,
+      18.417,
+      21.25,
+      24.083
+    ],
+    "transitionSamples": [],
+    "transitionSamplesDropped": 0,
+    "tolerance": 2,
+    "totalIssueCount": 4,
+    "truncated": false
+  },
+  "motion": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": false,
+    "samples": 0
+  },
+  "contrast": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": true,
+    "samples": [
+      1.417,
+      7.083,
+      12.75,
+      18.417,
+      24.083
+    ],
+    "checked": 8,
+    "passed": 8
+  },
+  "craft": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 5,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "first_frame_empty",
+        "severity": "warning",
+        "message": "Frame 0 shows only the background, and the first frame is the thumbnail on social players: have the title or key image already on screen at 0 s instead of entering from nothing; see references/review.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0
+      },
+      {
+        "code": "line_unread",
+        "severity": "warning",
+        "message": "\"YOUR AGENT HAS A COCKPIT NOW.\" (6 words) is on screen 1.47 s (±0.01 s), under its 1.72 s floor: hold it about 0.5 s + 0.3 s a word (2.30 s here) before it leaves or changes; see references/motion.md.",
+        "text": "YOUR AGENT HAS A COCKPIT NOW.",
+        "selector": "#hook1",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 379.98,
+          "y": 755.92,
+          "width": 1160.02,
+          "height": 100.15999999999997
+        },
+        "time": 1.672,
+        "words": 6,
+        "seconds": 1.469,
+        "floorSeconds": 1.725,
+        "measured": [
+          {
+            "time": 1.375,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 1.5,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 1.625,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 1.75,
+            "opacity": 0.97,
+            "heightPx": 100
+          },
+          {
+            "time": 1.875,
+            "opacity": 1,
+            "heightPx": 100
+          },
+          {
+            "time": 2,
+            "opacity": 1,
+            "heightPx": 100
+          },
+          {
+            "time": 2.125,
+            "opacity": 1,
+            "heightPx": 100
+          },
+          {
+            "time": 2.75,
+            "opacity": 1,
+            "heightPx": 100
+          },
+          {
+            "time": 2.875,
+            "opacity": 1,
+            "heightPx": 100
+          },
+          {
+            "time": 3,
+            "opacity": 0.95,
+            "heightPx": 100
+          },
+          {
+            "time": 3.125,
+            "opacity": 0.64,
+            "heightPx": 100
+          },
+          {
+            "time": 3.25,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 3.375,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 3.5,
+            "opacity": null,
+            "heightPx": null
+          }
+        ]
+      },
+      {
+        "code": "line_unread",
+        "severity": "warning",
+        "message": "The film's last line \"JARVIS DECK\" (2 words) is on screen 0.90 s (±0.01 s), under the 2.00 s a closing line needs: hold it about 0.5 s + 0.3 s a word and at least 2 s before the film ends; see references/motion.md.",
+        "text": "JARVIS DECK",
+        "selector": "#logo5",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 464.22,
+          "y": 843.73,
+          "width": 991.56,
+          "height": 130
+        },
+        "time": 24.602,
+        "words": 2,
+        "seconds": 0.902,
+        "floorSeconds": 2,
+        "measured": [
+          {
+            "time": 24.25,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 24.375,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 24.5,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 24.625,
+            "opacity": 0.51,
+            "heightPx": 130
+          },
+          {
+            "time": 24.75,
+            "opacity": 0.99,
+            "heightPx": 130
+          },
+          {
+            "time": 24.875,
+            "opacity": 1,
+            "heightPx": 130
+          },
+          {
+            "time": 25,
+            "opacity": 1,
+            "heightPx": 130
+          },
+          {
+            "time": 25.125,
+            "opacity": 1,
+            "heightPx": 130
+          },
+          {
+            "time": 25.25,
+            "opacity": 1,
+            "heightPx": 130
+          },
+          {
+            "time": 25.375,
+            "opacity": 1,
+            "heightPx": 130
+          }
+        ]
+      },
+      {
+        "code": "line_unread",
+        "severity": "warning",
+        "message": "The film's last line \"OPEN-SOURCE · RUNS LOCAL · ONE COMMAND TO BOOT\" (8 words) is on screen 0.50 s (±0.01 s), under the 2.17 s a closing line needs: hold it about 0.5 s + 0.3 s a word and at least 2 s before the film ends; see references/motion.md.",
+        "text": "OPEN-SOURCE · RUNS LOCAL · ONE COMMAND TO BOOT",
+        "selector": "#tag5",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 392.61,
+          "y": 982.72,
+          "width": 1134.77,
+          "height": 41
+        },
+        "time": 25,
+        "words": 8,
+        "seconds": 0.504,
+        "floorSeconds": 2.175,
+        "measured": [
+          {
+            "time": 24.625,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 24.75,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 24.875,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 25,
+            "opacity": 0.52,
+            "heightPx": 41
+          },
+          {
+            "time": 25.125,
+            "opacity": 0.94,
+            "heightPx": 41
+          },
+          {
+            "time": 25.25,
+            "opacity": 1,
+            "heightPx": 41
+          },
+          {
+            "time": 25.375,
+            "opacity": 1,
+            "heightPx": 41
+          }
+        ]
+      },
+      {
+        "code": "line_unread",
+        "severity": "warning",
+        "message": "The film's last line \"github.com/DeezGit21/jarvis-deck\" (5 words) is on screen 0.30 s (±0.01 s), under the 2.00 s a closing line needs: hold it about 0.5 s + 0.3 s a word and at least 2 s before the film ends; see references/motion.md.",
+        "text": "github.com/DeezGit21/jarvis-deck",
+        "selector": "#repo5",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 677.11,
+          "y": 1031.35,
+          "width": 565.7700000000001,
+          "height": 35
+        },
+        "time": 25.203,
+        "words": 5,
+        "seconds": 0.301,
+        "floorSeconds": 2,
+        "measured": [
+          {
+            "time": 24.875,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 25,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 25.125,
+            "opacity": null,
+            "heightPx": null
+          },
+          {
+            "time": 25.25,
+            "opacity": 0.73,
+            "heightPx": 35
+          },
+          {
+            "time": 25.375,
+            "opacity": 0.99,
+            "heightPx": 35
+          }
+        ]
+      }
+    ],
+    "enabled": true,
+    "step": 0.125,
+    "samples": 204
+  },
+  "audio": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "hdr": {
+    "autoPromotion": null,
+    "inspection": "available"
+  },
+  "snapshots": {
+    "enabled": false,
+    "files": [],
+    "times": [],
+    "findingFiles": []
+  },
+  "saved": {
+    "id": "14f0718e-1a9a-4556-ad10-9a9b64595528",
+    "revision": null,
+    "report": "D:\\Dev\\PROJECTS\\jarvis-deck\\brag-output\\composition\\.hyperframes\\artifacts\\checks\\14f0718e-1a9a-4556-ad10-9a9b64595528.json",
+    "attribution": "inputs-changed"
+  },
+  "_meta": {
+    "version": "0.9.40",
+    "latestVersion": "0.9.40",
+    "updateAvailable": false,
+    "checkedAt": "2026-11-12T23:45:42.851Z",
+    "skillsOutdated": 4,
+    "skillsMissing": 2
+  }
+}

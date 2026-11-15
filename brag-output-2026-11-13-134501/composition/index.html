@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: 'Orbitron'; font-weight: 700; src: url('assets/fonts/orbitron-700.woff2') format('woff2'); }
+      @font-face { font-family: 'Orbitron'; font-weight: 900; src: url('assets/fonts/orbitron-900.woff2') format('woff2'); }
+      @font-face { font-family: 'Rajdhani'; font-weight: 500; src: url('assets/fonts/rajdhani-500.woff2') format('woff2'); }
+      @font-face { font-family: 'Rajdhani'; font-weight: 600; src: url('assets/fonts/rajdhani-600.woff2') format('woff2'); }
+      @font-face { font-family: 'Rajdhani'; font-weight: 700; src: url('assets/fonts/rajdhani-700.woff2') format('woff2'); }
+      :root {
+        --ground: #020610;
+        --ink: #f0f6fc;
+        --ink-2: #94a3b8;
+        --accent: #00f0ff;
+        --amber: #f59e0b;
+        --card: #090e17;
+        --stroke: rgba(0, 240, 255, 0.16);
+        --font-display: 'Orbitron';
+        --font-sub: 'Rajdhani';
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--ground); }
+      #root { width: 100%; height: 100%; position: relative; font-family: var(--font-sub); color: var(--ink); }
+      .ground { position: absolute; inset: 0; background: var(--ground); }
+      .hud-grid-bg {
+        position: absolute; inset: 0;
+        background-image:
+          radial-gradient(circle at 50% 25%, rgba(0, 240, 255, 0.07) 0%, transparent 60%),
+          linear-gradient(to right, rgba(0, 240, 255, 0.04) 1px, transparent 1px),
+          linear-gradient(to bottom, rgba(0, 240, 255, 0.04) 1px, transparent 1px);
+        background-size: 100% 100%, 32px 32px, 32px 32px;
+      }
+      .hud-scanlines {
+        position: absolute; inset: 0; z-index: 50; pointer-events: none;
+        background:
+          linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.28) 50%),
+          linear-gradient(90deg, rgba(0, 240, 255, 0.02), rgba(0, 240, 255, 0.01), rgba(0, 240, 255, 0.02));
+        background-size: 100% 3px, 6px 100%;
+      }
+      .scene { position: absolute; inset: 0; }
+      .clip { overflow: hidden; }
+      .shot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+      .seq-frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; visibility: hidden; }
+      .mono { font-family: 'JetBrains Mono', monospace; }
+      .hud-label { font-family: var(--font-display); font-weight: 700; letter-spacing: 0.22em; }
+      .caption {
+        position: absolute; font-family: var(--font-sub); font-weight: 700; color: var(--ink);
+        text-shadow: 0 0 24px rgba(0, 240, 255, 0.35); opacity: 0; z-index: 20;
+      }
+      .spoken {
+        position: absolute; left: 50%; bottom: 96px;
+        display: flex; align-items: center; gap: 22px;
+        font-family: 'JetBrains Mono', monospace; font-size: 38px; color: var(--ink);
+        background: rgba(2, 6, 16, 0.82); border: 1px solid var(--stroke);
+        border-radius: 14px; padding: 20px 34px; white-space: nowrap;
+        box-shadow: 0 0 30px rgba(0, 240, 255, 0.18); opacity: 0; z-index: 22;
+      }
+      .spoken .led {
+        width: 14px; height: 14px; border-radius: 50%; background: var(--accent);
+        box-shadow: 0 0 12px rgba(0, 240, 255, 0.9); flex: none;
+      }
+      .bar {
+        position: absolute; bottom: 0; width: 34px; border-radius: 6px 6px 0 0;
+        background: linear-gradient(180deg, var(--accent), rgba(0, 240, 255, 0.25));
+        box-shadow: 0 0 18px rgba(0, 240, 255, 0.5);
+        transform-origin: bottom;
+      }
+      #fadeout { position: absolute; inset: 0; background: #01040a; opacity: 0; z-index: 60; pointer-events: none; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="25.5"
+      data-width="1920"
+      data-height="1080"
+      data-motion-blur="on"
+    >
+      <div class="ground"></div>
+      <div class="hud-grid-bg"></div>
+
+      <!-- SCENE 1 — REAL orb + hook (0-3.2s) -->
+      <div id="scene1" class="scene clip" data-start="0" data-duration="3.2" data-track-index="1" data-track-kind="graphics">
+        <div id="seq1" style="position:absolute; inset:0;"></div>
+        <div style="position:absolute; inset:0; background:linear-gradient(180deg, rgba(1,4,10,0.55) 0%, transparent 32%, transparent 62%, rgba(1,4,10,0.75) 100%);"></div>
+        <div id="brand1" class="hud-label" style="position:absolute; top:64px; left:0; right:0; text-align:center; font-size:44px; font-weight:900; color:var(--ink); letter-spacing:0.3em; opacity:0;">
+          JARVIS <span style="color:var(--accent);">DECK</span>
+        </div>
+        <h1 id="hook1" class="caption" style="left:0; right:0; top:70%; text-align:center; font-size:78px; font-weight:900; letter-spacing:0.04em; text-shadow:0 0 30px rgba(0,240,255,0.45);">
+          YOUR AGENT HAS A <span style="color:var(--accent);">COCKPIT</span> NOW.
+        </h1>
+      </div>
+
+      <!-- SCENE 2 — repacked overview, three live shots (3.2-7.6s) -->
+      <div id="scene2" class="scene clip" data-start="3.2" data-duration="4.4" data-track-index="2" data-track-kind="graphics">
+        <div id="shot2a" style="position:absolute; inset:0;">
+          <img id="img2a" class="shot" src="assets/captures/v2-overview-top.png" style="transform-origin:50% 30%;" />
+        </div>
+        <div id="shot2b" style="position:absolute; inset:0; opacity:0;">
+          <img id="img2b" class="shot" src="assets/captures/v2-overview-mid.png" style="transform-origin:50% 20%;" />
+        </div>
+        <div id="shot2c" style="position:absolute; inset:0; opacity:0;">
+          <img id="img2c" class="shot" src="assets/captures/v2-overview-low2.png" style="transform-origin:50% 55%;" />
+        </div>
+        <div style="position:absolute; inset:0; background:linear-gradient(180deg, transparent 55%, rgba(1,4,10,0.7) 100%);"></div>
+        <div id="cap2" class="caption" style="left:0; right:0; bottom:64px; text-align:center; font-size:56px; letter-spacing:0.12em;">
+          EVERY SERVICE. EVERY TASK. <span style="color:var(--accent);">ONE DECK.</span>
+        </div>
+      </div>
+
+      <!-- SCENE 3 — all five tabs (7.6-11.4s) -->
+      <div id="scene3" class="scene clip" data-start="7.6" data-duration="3.8" data-track-index="3" data-track-kind="graphics">
+        <div id="tab3a" style="position:absolute; inset:0;">
+          <img class="shot" src="assets/captures/v2-tab-vision2.png" />
+        </div>
+        <div id="tab3b" style="position:absolute; inset:0; opacity:0;">
+          <img class="shot" src="assets/captures/v2-tab-money.png" />
+        </div>
+        <div id="tab3c" style="position:absolute; inset:0; opacity:0;">
+          <img class="shot" src="assets/captures/v2-tab-goals.png" />
+        </div>
+        <div id="tab3d" style="position:absolute; inset:0; opacity:0;">
+          <img class="shot" src="assets/captures/v2-tab-settings.png" />
+        </div>
+        <div style="position:absolute; inset:0; background:linear-gradient(180deg, rgba(1,4,10,0.5) 0%, transparent 26%, transparent 66%, rgba(1,4,10,0.75) 100%);"></div>
+        <div id="cap3" class="caption" style="left:0; right:0; bottom:64px; text-align:center; font-size:52px; letter-spacing:0.14em;">
+          VISION · MONEY · GOALS · <span style="color:var(--accent);">SETTINGS</span> — LIVE
+        </div>
+      </div>
+
+      <!-- SCENE 4 — JARVIS answers, differently every time (11.4-15.5s) -->
+      <div id="scene4" class="scene clip" data-start="11.4" data-duration="4.1" data-track-index="4" data-track-kind="graphics">
+        <div id="shot4a" style="position:absolute; inset:0;">
+          <img id="img4a" class="shot" src="assets/captures/v2-ack-working.png" style="transform-origin:50% 40%;" />
+        </div>
+        <div id="shot4b" style="position:absolute; inset:0; opacity:0;">
+          <img id="img4b" class="shot" src="assets/captures/v2-ack-done.png" style="transform-origin:50% 40%;" />
+        </div>
+        <div id="shot4c" style="position:absolute; inset:0; opacity:0;">
+          <img id="img4c" class="shot" src="assets/captures/v2-cmd2-working.png" style="transform-origin:50% 40%;" />
+        </div>
+        <div style="position:absolute; inset:0; background:linear-gradient(180deg, rgba(1,4,10,0.55) 0%, transparent 30%, transparent 58%, rgba(1,4,10,0.82) 100%);"></div>
+        <div id="cap4" class="caption" style="left:0; right:0; top:56px; text-align:center; font-size:48px; letter-spacing:0.14em;">
+          A <span style="color:var(--accent);">DIFFERENT ANSWER</span> EVERY TIME.
+        </div>
+        <div id="speak4a" class="spoken"><span class="led"></span>Running diagnostics on Binary Baseline, sir</div>
+        <div id="speak4b" class="spoken"><span class="led"></span>Cycling HVAC Commission Pro for you, sir</div>
+      </div>
+
+      <!-- SCENE 5 — business line, orb speaks, outro (15.5-25.5s) -->
+      <div id="scene5" class="scene clip" data-start="15.5" data-duration="10" data-track-index="5" data-track-kind="graphics">
+        <div id="shot5v" style="position:absolute; inset:0;">
+          <img id="img5v" class="shot" src="assets/captures/v2-voice-card.png" style="transform-origin:50% 50%;" />
+        </div>
+        <div id="seq5" style="position:absolute; inset:0; opacity:0;"></div>
+        <div style="position:absolute; inset:0; background:linear-gradient(180deg, rgba(1,4,10,0.5) 0%, transparent 30%, transparent 55%, rgba(1,4,10,0.85) 100%);"></div>
+        <div id="cap5v" class="caption" style="left:0; right:0; top:56px; text-align:center; font-size:46px; letter-spacing:0.12em;">
+          YOUR <span style="color:var(--accent);">BUSINESS LINE</span>, FIRST — ((602) 555-0151
+        </div>
+        <div id="reply5" class="mono" style="position:absolute; left:50%; bottom:330px; width:1240px; text-align:center; font-size:33px; line-height:1.55; color:var(--ink); opacity:0; text-shadow:0 2px 14px rgba(1,4,10,0.9);">
+          <span style="color:var(--accent);">jarvis ▸</span> Good afternoon, sir. Three priorities today.
+        </div>
+        <div id="wave5" style="position:absolute; left:50%; transform:translateX(-50%); bottom:220px; width:1100px; height:80px;"></div>
+        <div id="logo5" class="hud-label" style="position:absolute; left:0; right:0; bottom:118px; text-align:center; font-size:104px; font-weight:900; color:var(--ink); letter-spacing:0.14em; text-shadow:0 0 44px rgba(0,240,255,0.5); opacity:0; z-index:20;">
+          JARVIS <span style="color:var(--accent);">DECK</span>
+        </div>
+        <div id="tag5" style="position:absolute; left:0; right:0; bottom:64px; text-align:center; font-family:var(--font-sub); font-weight:600; font-size:32px; letter-spacing:0.3em; color:var(--ink-2); opacity:0; z-index:20;">
+          OPEN-SOURCE · RUNS LOCAL · ONE COMMAND TO BOOT
+        </div>
+        <div id="repo5" class="mono" style="position:absolute; left:0; right:0; bottom:18px; text-align:center; font-size:26px; letter-spacing:0.08em; color:var(--accent); opacity:0; z-index:20;">
+          github.com/DeezGit21/jarvis-deck
+        </div>
+      </div>
+
+      <div class="hud-scanlines"></div>
+      <div id="fadeout"></div>
+
+      <!-- AUDIO -->
+      <audio id="bg-music" data-start="0" data-duration="25.5" data-track-index="10" data-volume="0.3" data-fade-in="0.4" data-fade-out="1.8" src="assets/music/happy-beats-business-moves-vol-12-by-ende-dot-app.mp3"></audio>
+      <audio id="voice" data-start="15.84" data-duration="8.99" data-track-index="11" data-volume="1" src="assets/audio/jarvis-reply-v2.mp3"></audio>
+      <audio id="sfx-boot" data-start="0.15" data-duration="1" data-track-index="12" data-volume="0.5" src="assets/sfx/interface/click_001.ogg"></audio>
+      <audio id="sfx-hook" data-start="1.62" data-duration="1.4" data-track-index="13" data-volume="0.8" src="assets/sfx/impact/impactSoft_medium_000.ogg"></audio>
+      <audio id="sfx-cut2a" data-start="3.3" data-duration="0.6" data-track-index="14" data-volume="0.55" src="assets/sfx/interface/drop_001.ogg"></audio>
+      <audio id="sfx-cut2b" data-start="4.9" data-duration="0.6" data-track-index="15" data-volume="0.5" src="assets/sfx/interface/select_008.ogg"></audio>
+      <audio id="sfx-cut2c" data-start="6.3" data-duration="0.6" data-track-index="16" data-volume="0.5" src="assets/sfx/interface/drop_001.ogg"></audio>
+      <audio id="sfx-tab1" data-start="7.7" data-duration="0.6" data-track-index="17" data-volume="0.55" src="assets/sfx/interface/select_008.ogg"></audio>
+      <audio id="sfx-tab2" data-start="8.55" data-duration="0.6" data-track-index="18" data-volume="0.5" src="assets/sfx/interface/drop_001.ogg"></audio>
+      <audio id="sfx-tab3" data-start="9.5" data-duration="0.6" data-track-index="19" data-volume="0.5" src="assets/sfx/interface/select_008.ogg"></audio>
+      <audio id="sfx-tab4" data-start="10.45" data-duration="0.6" data-track-index="20" data-volume="0.55" src="assets/sfx/interface/drop_001.ogg"></audio>
+      <audio id="sfx-cmd1" data-start="11.5" data-duration="0.6" data-track-index="21" data-volume="0.6" src="assets/sfx/interface/click_001.ogg"></audio>
+      <audio id="sfx-cmd2" data-start="12.6" data-duration="0.6" data-track-index="22" data-volume="0.5" src="assets/sfx/keyboard/keypress-001.wav"></audio>
+      <audio id="sfx-cmd3" data-start="13.9" data-duration="0.6" data-track-index="23" data-volume="0.5" src="assets/sfx/interface/click_001.ogg"></audio>
+      <audio id="sfx-voice" data-start="15.84" data-duration="0.6" data-track-index="24" data-volume="0.5" src="assets/sfx/interface/select_008.ogg"></audio>
+      <audio id="sfx-bell" data-start="24.56" data-duration="0.9" data-track-index="25" data-volume="0.75" src="assets/sfx/impact/impactBell_heavy_000.ogg"></audio>
+    </div>
+
+    <script>
+      const FRAME_COUNT = 111;
+      const FPS_SEQ = 15;
+
+      // ---- stack every real orb frame in each sequence host; visibility toggled by the timeline ----
+      function buildSeq(hostId) {
+        const host = document.getElementById(hostId);
+        const imgs = [];
+        for (let i = 0; i < FRAME_COUNT; i++) {
+          const im = document.createElement('img');
+          im.className = 'seq-frame';
+          im.src = 'assets/orb/orb_' + String(i).padStart(4, '0') + '.jpg';
+          host.appendChild(im);
+          imgs.push(im);
+        }
+        return imgs;
+      }
+      const seq1 = buildSeq('seq1');
+      const seq5 = buildSeq('seq5');
+      const ref1 = { v: -1 }, ref5 = { v: -1 };
+      function showFrame(imgs, i, lastRef) {
+        if (i === lastRef.v) return;
+        if (lastRef.v >= 0) imgs[lastRef.v].style.visibility = 'hidden';
+        imgs[i].style.visibility = 'visible';
+        lastRef.v = i;
+      }
+
+      // ---- waveform bars (scene 5), deterministic heights ----
+      const wave5 = document.getElementById('wave5');
+      for (let i = 0; i < 24; i++) {
+        const b = document.createElement('div');
+        b.className = 'bar';
+        const h = 16 + Math.abs(Math.sin(i * 0.83 + 1.1)) * 62;
+        b.style.cssText = 'left:' + (i * 46) + 'px;height:' + h.toFixed(0) + 'px;transform:scaleY(0);';
+        wave5.appendChild(b);
+      }
+
+      // ---- one paused timeline for the whole film ----
+      gsap.set('#reply5', { xPercent: -50 }); // GSAP-managed centering (CSS transform conflicts with y tweens)
+      gsap.set('.spoken', { xPercent: -50 });
+      const tl = gsap.timeline({ paused: true });
+
+      // SCENE 1 — real orb boots in, brand + hook slam
+      const c1 = { f: 0 };
+      tl.fromTo(c1, { f: 0 }, {
+        f: 48, duration: 3.0, ease: 'none',
+        onUpdate: () => showFrame(seq1, Math.min(48, Math.round(c1.f)), ref1),
+      }, 0.15);
+      tl.fromTo('#seq1', { opacity: 0, scale: 1.12 }, { opacity: 1, scale: 1.02, duration: 0.9, ease: 'power2.out' }, 0.15);
+      tl.fromTo('#brand1', { opacity: 0, y: -18 }, { opacity: 1, y: 0, duration: 0.4, ease: 'power3.out' }, 0.5);
+      tl.fromTo('#hook1', { opacity: 0, filter: 'blur(10px)', scale: 1.06 }, { opacity: 1, filter: 'blur(0px)', scale: 1, duration: 0.22, ease: 'power4.out' }, 1.62);
+      tl.to('#scene1', { opacity: 0, filter: 'blur(6px)', duration: 0.28, ease: 'power2.in' }, 2.9);
+
+      // SCENE 2 — repacked overview, three Ken-Burns shots (cuts at 4.9 / 6.3)
+      tl.fromTo('#shot2a', { scale: 1.06 }, { scale: 1.0, duration: 1.7, ease: 'none' }, 3.2);
+      tl.fromTo('#img2a', { y: 0 }, { y: -30, duration: 1.7, ease: 'none' }, 3.2);
+      tl.fromTo('#shot2b', { opacity: 0, scale: 1.06 }, { opacity: 1, scale: 1.02, duration: 0.35, ease: 'power2.out' }, 4.9);
+      tl.fromTo('#img2b', { y: 0 }, { y: -34, duration: 1.4, ease: 'none' }, 4.9);
+      tl.fromTo('#shot2c', { opacity: 0, scale: 1.05 }, { opacity: 1, scale: 1.0, duration: 0.35, ease: 'power2.out' }, 6.3);
+      tl.fromTo('#img2c', { y: 0 }, { y: -26, duration: 1.3, ease: 'none' }, 6.3);
+      tl.fromTo('#cap2', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.35, ease: 'power3.out' }, 4.0);
+      tl.to('#scene2', { opacity: 0, filter: 'blur(6px)', duration: 0.28, ease: 'power2.in' }, 7.3);
+
+      // SCENE 3 — five tabs, beat-locked cuts (8.55 / 9.5 / 10.45)
+      tl.fromTo('#tab3a', { opacity: 0, scale: 1.05 }, { opacity: 1, scale: 1.0, duration: 0.5, ease: 'power2.out' }, 7.7);
+      tl.fromTo('#tab3b', { opacity: 0 }, { opacity: 1, duration: 0.3, ease: 'power2.out' }, 8.55);
+      tl.fromTo('#tab3c', { opacity: 0 }, { opacity: 1, duration: 0.3, ease: 'power2.out' }, 9.5);
+      tl.fromTo('#tab3d', { opacity: 0 }, { opacity: 1, duration: 0.3, ease: 'power2.out' }, 10.45);
+      tl.fromTo('#cap3', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.35, ease: 'power3.out' }, 7.85);
+      tl.to('#scene3', { opacity: 0, filter: 'blur(6px)', duration: 0.28, ease: 'power2.in' }, 11.1);
+
+      // SCENE 4 — JARVIS answers: in-place status, then the drawer restart
+      tl.fromTo('#shot4a', { scale: 1.08 }, { scale: 1.0, duration: 1.2, ease: 'none' }, 11.4);
+      tl.fromTo('#shot4b', { opacity: 0 }, { opacity: 1, duration: 0.32, ease: 'power2.out' }, 12.6);
+      tl.fromTo('#img4b', { y: 0 }, { y: -22, duration: 1.3, ease: 'none' }, 12.6);
+      tl.fromTo('#shot4c', { opacity: 0 }, { opacity: 1, duration: 0.32, ease: 'power2.out' }, 13.9);
+      tl.fromTo('#img4c', { y: 0 }, { y: -24, duration: 1.6, ease: 'none' }, 13.9);
+      tl.fromTo('#cap4', { opacity: 0, y: -14 }, { opacity: 1, y: 0, duration: 0.35, ease: 'power3.out' }, 11.7);
+      // spoken-line chips land with their footage beats
+      tl.fromTo('#speak4a', { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.3, ease: 'power3.out' }, 12.75);
+      tl.to('#speak4a', { opacity: 0, y: -12, duration: 0.25, ease: 'power2.in' }, 13.75);
+      tl.fromTo('#speak4b', { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.3, ease: 'power3.out' }, 14.05);
+      tl.to('#scene4', { opacity: 0, filter: 'blur(6px)', duration: 0.28, ease: 'power2.in' }, 15.2);
+
+      // SCENE 5 — business-line voice card, then orb speaks, outro lockup
+      tl.fromTo('#shot5v', { scale: 1.06 }, { scale: 1.0, duration: 1.65, ease: 'none' }, 15.5);
+      tl.fromTo('#cap5v', { opacity: 0, y: -14 }, { opacity: 1, y: 0, duration: 0.35, ease: 'power3.out' }, 15.9);
+      tl.to('#shot5v', { opacity: 0, duration: 0.3, ease: 'power2.in' }, 16.85);
+      tl.to('#cap5v', { opacity: 0, duration: 0.25, ease: 'power2.in' }, 16.85);
+      const c5 = { f: 0 };
+      tl.fromTo(c5, { f: 0 }, {
+        f: 107, duration: 7.05, ease: 'none',
+        onUpdate: () => showFrame(seq5, Math.round(c5.f) % FRAME_COUNT, ref5),
+      }, 17.15);
+      tl.fromTo('#seq5', { opacity: 0, scale: 1.08 }, { opacity: 1, scale: 1.0, duration: 0.7, ease: 'power2.out' }, 17.15);
+      tl.fromTo('#reply5', { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.4, ease: 'power3.out' }, 17.7);
+      tl.fromTo('#wave5 .bar', { scaleY: 0 }, { scaleY: 1, duration: 0.4, stagger: 0.02, ease: 'sine.inOut' }, 17.2);
+      // pulse bars while the voice plays, then settle
+      tl.to('#wave5 .bar', { scaleY: 0.35, duration: 0.22, yoyo: true, repeat: 26, stagger: 0.03, ease: 'sine.inOut' }, 17.7);
+      tl.to('#wave5 .bar', { scaleY: 0.1, opacity: 0.4, duration: 0.6, ease: 'power2.in' }, 24.2);
+      // clear the reply + waveform before the outro lockup
+      tl.to('#reply5', { opacity: 0, y: -14, duration: 0.3, ease: 'power2.in' }, 24.2);
+      tl.to('#wave5', { opacity: 0, duration: 0.35, ease: 'power2.in' }, 24.2);
+      // beat-locked: 24.56s strong cue — logo lands over the voice tail
+      tl.fromTo('#logo5', { opacity: 0, filter: 'blur(12px)', y: 24 }, { opacity: 1, filter: 'blur(0px)', y: 0, duration: 0.3, ease: 'power4.out' }, 24.56);
+      tl.fromTo('#tag5', { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.3, ease: 'power3.out' }, 24.95);
+      tl.fromTo('#repo5', { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.3, ease: 'power3.out' }, 25.15);
+      tl.to('#fadeout', { opacity: 1, duration: 0.35, ease: 'power2.in' }, 25.15);
+
+      window.__timelines['main'] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>
