@@ -1221,6 +1221,180 @@ def _brief_cmd(query: str) -> dict | None:
             "date": _local_date(), "fastpath": "brief"}
 
 
+# Inbox-card click phrasing: summarize the unread email "<subject>" from
+# <sender> in my <acct> inbox and draft a reply if it needs one.
+_MAIL_CMD_RE = re.compile(
+    r"\b(summar|read|draft|open)\w*.{0,80}?email\b.{0,40}?\"([^\"]{2,200})\""
+    r".{0,40}?from\s+(.+?)\s+in\s+my\s+([a-z0-9_-]{2,30})", re.I | re.S)
+
+
+def _mail_find(acct: str, subject: str, sender: str):
+    """Locate an inbox message by account + subject/sender. Cached /mail/inbox
+    rows first (instant), one fresh +triage as fallback.
+    Returns (config_dir, row) or None."""
+    acct_l, subj_l = acct.lower(), subject.lower().strip()
+    snd_l = sender.lower().strip()
+    accounts = {a["name"].lower(): (a["config_dir"] or "") for a in _gws_accounts()}
+    cfg = accounts.get(acct_l, next(iter(accounts.values()), ""))
+
+    def match(items):
+        for r in items or []:
+            if subj_l and subj_l not in str(r.get("subject", "")).lower():
+                continue
+            frm = str(r.get("from", "")).lower()
+            if snd_l and snd_l not in frm and snd_l.split("<")[0].strip() not in frm:
+                continue
+            return r
+        return None
+
+    CACHE.mkdir(parents=True, exist_ok=True)
+    try:
+        data = json.loads((CACHE / "gws-mail.json").read_text(encoding="utf-8"))
+        for a in data.get("accounts", []):
+            if a.get("name", "").lower() != acct_l:
+                continue
+            r = match(a.get("items") or [])
+            if r:
+                return cfg, r
+    except (json.JSONDecodeError, OSError):
+        pass
+    rc, out, _err = _gws_run(["gmail", "+triage", "--max", "25", "--format", "json"], cfg)
+    if rc == 0:
+        r = match(_parse_triage(_json_tail(out)))
+        if r:
+            return cfg, r
+    return None
+
+
+def _mail_read_body(config_dir: str, msg_id: str) -> str:
+    """Full message body via gws gmail +read (converts HTML to text itself)."""
+    rc, out, err = _gws_run(["gmail", "+read", "--id", msg_id, "--format", "json"],
+                            config_dir, timeout=45)
+    if rc != 0:
+        raise RuntimeError((err or out).strip()[:200] or "gws gmail +read failed")
+    data = _json_tail(out) or {}
+    body = str(data.get("body") or data.get("body_text") or data.get("text") or "").strip()
+    return (body or str(data.get("snippet") or ""))[:6000]
+
+
+_MAIL_PROMPT = """Email in the {acct} inbox:
+From: {frm}
+Subject: {subject}
+Date: {date}
+
+Body:
+{body}
+
+You are {persona}, a crisp butler. Reply in plain text (no markdown):
+1. A spoken summary of this email — at most 80 words, natural sentences, as if reporting to your employer on the phone. Lead with who it's from and what they want.
+2. A line containing only ---
+3. A short suggested reply (2-4 sentences) IF the email warrants one; otherwise write exactly: NO REPLY NEEDED"""
+
+
+def _mail_cmd(query: str) -> dict | None:
+    """'summarize the email "<subject>" from <sender> in my <acct> inbox' — the
+    inbox card's click phrasing. Fetches the message directly + one completion
+    (~4-6s) instead of the 2-5 min agent turn. Returns a /command reply dict,
+    or None when the query isn't this shape."""
+    m = _MAIL_CMD_RE.search(query)
+    if not m:
+        return None
+    subject, sender, acct = m.group(2), m.group(3), m.group(4)
+    found = _mail_find(acct, subject, sender)
+    if not found:
+        return {"ok": True,
+                "reply": "I couldn't find that message in the " + acct +
+                         " inbox, sir — it may have scrolled past the recent list. It'll be in the card again if it's recent.",
+                "date": _local_date(), "fastpath": "mail"}
+    config_dir, row = found
+    mid = str(row.get("id") or "")
+    try:
+        warm = _MAIL_BODIES.get(mid)
+        body = warm["body"] if warm else _mail_read_body(config_dir, mid)
+        prompt = _MAIL_PROMPT.format(
+            acct=acct, frm=row.get("from") or sender, subject=row.get("subject") or subject,
+            date=row.get("date") or "unknown", body=body or "(empty body)", persona=_PERSONA)
+        text = _openrouter_complete([{"role": "user", "content": prompt}], timeout=45)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=f"email summarize failed: {e}")
+    summary, _, draft = text.partition("\n---")
+    summary = summary.strip()
+    draft = draft.replace("NO REPLY NEEDED", "", 1).strip()
+    if not summary:
+        summary = text.strip()[:600]
+    reply = summary
+    if draft and "no reply needed" not in draft.lower():
+        reply += "\n\nSuggested reply:\n" + draft
+    speech = summary
+    if len(speech) > 600:
+        cut = speech.rfind(". ", 0, 600)
+        speech = speech[: cut + 1 if cut > 300 else 600]
+    return {"ok": True, "reply": reply, "speech": speech,
+            "date": _local_date(), "fastpath": "mail"}
+
+
+# ---------------------------------------------------------------- context prep (warm layer)
+# A background thread keeps the dashboard snapshot AND the unread email bodies
+# warm, so a card click / spoken request only pays for ONE completion (~2-5s)
+# and never for gathering. Without it the first click after idle pays the full
+# gather cost (and an email click paid a 2-5 min agent turn before the
+# mail fastpath existed).
+
+_PREP_START_GUARD = [False]
+_MAIL_BODIES: dict = {}  # msg_id -> {"body": str, "t": epoch} — warmed by the prep thread
+_PREP_SECONDS = 300.0
+
+
+def _prep_mail_bodies() -> int:
+    """Pre-read the bodies of the messages currently listed in the /mail/inbox
+    cache (max 4 per account) into _MAIL_BODIES. Per-message failures are
+    swallowed — a click falls back to a live +read. Returns warmed count."""
+    try:
+        data = json.loads((CACHE / "gws-mail.json").read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return 0
+    accounts = {a["name"].lower(): (a["config_dir"] or "") for a in _gws_accounts()}
+    n = 0
+    for a in data.get("accounts", []):
+        cfg = accounts.get(str(a.get("name", "")).lower())
+        if cfg is None or not a.get("ok", True):
+            continue
+        for row in (a.get("items") or [])[:4]:
+            mid = str(row.get("id") or "")
+            if not mid or mid in _MAIL_BODIES:
+                continue
+            try:
+                _MAIL_BODIES[mid] = {"body": _mail_read_body(cfg, mid), "t": time.time()}
+                n += 1
+            except Exception:  # noqa: BLE001 — one bad message must not stall prep
+                continue
+    cutoff = time.time() - 2 * 86400  # the inbox list has moved on by then
+    for k in [k for k, v in _MAIL_BODIES.items() if v["t"] < cutoff]:
+        _MAIL_BODIES.pop(k, None)
+    return n
+
+
+def _prep_thread_loop():
+    """Every 5 minutes: refresh the inbox cache, warm its bodies, refresh the
+    dashboard snapshot. Staggered 20s after boot so the TTS prewarm wins the
+    first seconds."""
+    time.sleep(20)
+    while True:
+        try:
+            mail_inbox()  # refresh gws-mail.json if its TTL lapsed
+        except Exception:  # noqa: BLE001 — prep must never crash the thread
+            pass
+        try:
+            _prep_mail_bodies()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            _dash_context(force=True)
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(_PREP_SECONDS)
+
+
 @router.post("/brief/generate")
 def brief_generate():
     brief = _brief_generate_text()
@@ -1402,6 +1576,9 @@ def command(body: dict = Body(...)):
     brief_cmd = _brief_cmd(query)  # 'Generate my daily brief' — ~5s pipeline, not the agent
     if brief_cmd:
         return brief_cmd
+    mail_cmd = _mail_cmd(query)  # inbox-card 'summarize email' click — ~5s pipeline
+    if mail_cmd:
+        return mail_cmd
     query = _memory_block(query)
     sid = _deck_session_id()
     argv = ["hermes", "chat", "-Q", "--query-file", "-"]
@@ -3255,6 +3432,11 @@ def _rem_thread_loop() -> None:
 if _rem_enabled() and not _REM_START_GUARD[0]:
     _REM_START_GUARD[0] = True
     threading.Thread(target=_rem_thread_loop, daemon=True, name="agentos-remediation").start()
+
+# warm-context prep: dashboard snapshot + email bodies ready before the first click
+if not _PREP_START_GUARD[0]:
+    _PREP_START_GUARD[0] = True
+    threading.Thread(target=_prep_thread_loop, daemon=True, name="agentos-prep").start()
 
 
 @router.get("/remediation")
