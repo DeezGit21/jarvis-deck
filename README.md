@@ -40,6 +40,7 @@ style setup, but any backend that serves the same simple JSON routes works.
 | Agent activity | Cron runs + board task feed for the last 48h |
 | Calendar & Inbox | Google Calendar agenda (create + delete events inline), Gmail inbox — dual-account |
 | Telegram & Voice | Your bots' chats with inline reply, Google Voice texts / missed calls / voicemails with reply-by-email |
+| Notes | Quick-jot card — two-way sync with a Google Tasks list, so jots made on the deck show in the phone's Tasks app and vice versa (delete + edits + checked-off state propagate both ways) |
 | Money | Live tickers (Yahoo/Binance, no login), Stripe balance & payouts, Webull positions, sparklines |
 | Workshop | Describe an object, the LLM emits structured scene JSON, deterministic 3D renderer builds it — edit parts by prompt |
 | HUD companion | Frameless transparent always-on-top Electron overlay (Alt+Space) — mini orb, down services, top tasks |
@@ -97,6 +98,7 @@ curl http://127.0.0.1:8785/healthz    # {"ok":true}
 | Realtime voice + console chat | `OPENROUTER_API_KEY` in Settings → API keys |
 | Gemini TTS / spoken briefs | `GEMINI_API_KEY` |
 | Calendar / Inbox / Google Voice | the `gws` CLI with your Google account |
+| Notes card | the `gws` CLI with a Google account (syncs to the account's "Jarvis Notes" Tasks list — configurable via `notes:` in agentos.yaml) |
 | Telegram / db metrics | SSH access to the host that holds them (agentos.yaml) |
 | Status card pings | `services:` list in agentos.yaml |
 

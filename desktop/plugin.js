@@ -5223,6 +5223,85 @@ function MemoryCard() {
   })
 }
 
+// ------------------------------------------------------------ quick notes (⇄ Google Tasks)
+
+function NotesCard() {
+  const q = useQuery({
+    queryKey: ['agentos', 'notes'],
+    queryFn: () => REST('/notes'),
+    refetchInterval: 120000
+  })
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const d = q.data
+  const notes = (d && d.notes) || []
+  const emailOf = useGwsEmails()
+
+  async function add() {
+    const t = text.trim()
+    if (!t || busy) return
+    setBusy(true)
+    try {
+      await REST('/notes', { method: 'POST', body: { text: t } })
+      setText('')
+      setErr('')
+      await q.refetch()
+    } catch (e) { setErr((e && e.message) || 'save failed') }
+    setBusy(false)
+  }
+  async function drop(id) {
+    if (busy) return
+    setBusy(true)
+    try { await REST('/notes', { method: 'DELETE', body: { id } }); setErr(''); await q.refetch() } catch (e) { setErr((e && e.message) || 'delete failed') }
+    setBusy(false)
+  }
+
+  return jsx(AoCard, {
+    label: 'notes · quick jots · synced to google tasks',
+    delay: 170,
+    right: jsxs(Fragment, {
+      children: [
+        jsx('span', { className: 'text-xs text-(--ui-text-quaternary)', children: (d && d.total || 0) + ' notes' }),
+        jsx(AppOpenBtn, {
+          label: '\u2197 tasks',
+          url: 'https://tasks.google.com/embed/list/~/?authuser=' + encodeURIComponent(emailOf('personal')),
+          title: 'Open Google Tasks — the same list lives on your phone'
+        })
+      ]
+    }),
+    children: jsxs('div', { className: 'flex flex-col gap-2 min-h-0', children: [
+      jsxs('div', { className: 'flex items-start gap-1.5', children: [
+        jsx('textarea', {
+          value: text,
+          onChange: e => setText(e.target.value),
+          onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); add() } },
+          placeholder: 'jot a note — enter to save (shift+enter for a new line)',
+          rows: 2,
+          className: 'min-w-0 flex-1 resize-none rounded-md border border-(--ui-border) bg-transparent px-2.5 py-1.5 text-xs text-(--ui-text-primary) outline-none placeholder:text-(--ui-text-quaternary) focus:border-(--ui-accent)',
+          spellCheck: false
+        }),
+        jsx('button', { type: 'button', className: 'ao-btn shrink-0', onClick: add, disabled: busy, children: busy ? '\u2026' : 'ADD' })
+      ] }),
+      err && jsx('div', { className: 'text-xs text-[#f5495b]', children: err }),
+      jsx('div', { className: 'flex-1 space-y-1.5 overflow-y-auto', children: notes.length ? notes.slice(0, 30).map((n, i) =>
+        jsxs('div', { className: 'group flex items-start gap-2 min-w-0 text-xs ao-in' + (n.done ? ' opacity-45' : ''), style: { animationDelay: i * 30 + 'ms' }, children: [
+          jsx('span', { className: 'shrink-0 pt-0.5 text-(--ui-accent)', children: n.done ? '\u2713' : '\u25c6' }),
+          jsx('span', { className: 'min-w-0 flex-1 whitespace-pre-wrap break-words text-(--ui-text-secondary)', children: n.text }),
+          jsx('span', { className: 'shrink-0 pt-0.5 text-[11px] text-(--ui-text-quaternary)', title: new Date((n.ts || 0) * 1000).toLocaleString(), children: fmtAgo((n.ts || 0) * 1000) }),
+          jsx('button', {
+            type: 'button',
+            onClick: () => drop(n.id),
+            title: 'Delete this note (removes it from Google Tasks too)',
+            className: 'shrink-0 pt-0.5 text-[12px] text-(--ui-text-quaternary) opacity-0 transition-opacity group-hover:opacity-100 hover:text-[#f5495b]',
+            children: '\u2715'
+          })
+        ] }, n.id)
+      ) : jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: 'no notes yet — jot above, or add one in the Google Tasks app and it shows up here' }) })
+    ] })
+  })
+}
+
 // ------------------------------------------------------------ settings
 
 // localStorage number kept in sync across deck windows (the HUD companion is a
@@ -5596,6 +5675,7 @@ const WIDGETS = {
   automation: { title: 'Automation', span: 4,  rows: 4, render: () => jsx(AutomationCard, {}) },
   memory:  { title: 'Memory',        span: 4,  rows: 4, render: () => jsx(MemoryCard, {}) },
   metrics: { title: 'Metrics',       span: 4,  rows: 4, render: () => jsx(MetricsCard, {}) },
+  notes:   { title: 'Notes',        span: 12, rows: 4, render: () => jsx(NotesCard, {}) }, // full-width row — keeps 12-col packing exact
   // tickers + release board retired from the overview grid: tickers live on
   // the Money tab (QuotesCard renders there directly), releases duplicated
   // the projects & apps card. Declutter pass, D's call.
@@ -5608,9 +5688,9 @@ const WIDGETS = {
 // Row-packed so every grid row sums to exactly 12 cols — no dead space:
 // hero 12 | galaxy 8 + advisor 4 | brief 8 + status 4 | calendar 12 |
 // mail 4 + telegram 4 + voice 4 | automation 4 + memory 4 + metrics 4 |
-// agents 12 | console 12
+// notes 12 | agents 12 | console 12
 // (todos left the grid — it renders on the Goals tab now)
-const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'brief', 'status', 'calendar', 'mail', 'telegram', 'voice', 'automation', 'memory', 'metrics', 'agents', 'console']
+const DEFAULT_ORDER = ['hero', 'galaxy', 'advisor', 'brief', 'status', 'calendar', 'mail', 'telegram', 'voice', 'automation', 'memory', 'metrics', 'notes', 'agents', 'console']
 
 function defaultSizes() {
   const sizes = {}

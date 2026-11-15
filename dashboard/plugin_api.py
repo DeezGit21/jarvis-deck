@@ -3486,6 +3486,175 @@ def memory_delete(body: dict = Body(...)):
     return {"ok": True, "removed": mid}
 
 
+# ---------------------------------------------------------------- quick notes (local store ⇄ Google Tasks)
+
+_NOTES_CFG = _CFG.get("notes") if isinstance(_CFG.get("notes"), dict) else {}
+_NOTES_ACCOUNT = str(_NOTES_CFG.get("account") or "personal")
+_NOTES_LIST_TITLE = str(_NOTES_CFG.get("list_title") or "Jarvis Notes")
+_NOTES_FILE = AGENTOS / "notes.json"
+_NOTES_PULL_T = [0.0]
+_NOTES_LOCK = threading.Lock()
+
+
+def _notes_load() -> list[dict]:
+    try:
+        data = json.loads(_NOTES_FILE.read_text(encoding="utf-8"))
+        return [n for n in data if isinstance(n, dict)] if isinstance(data, list) else []
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _notes_save(notes: list[dict]) -> None:
+    _NOTES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _NOTES_FILE.write_text(json.dumps(notes), encoding="utf-8")
+
+
+def _notes_gws(args: list[str], timeout: int = 60):
+    """gws call against the notes account's config dir."""
+    acct = next((a for a in _gws_accounts() if a["name"].lower() == _NOTES_ACCOUNT), None)
+    return _gws_run(args, (acct or {}).get("config_dir") or "", timeout=timeout)
+
+
+def _notes_tasklist_id() -> str | None:
+    rc, out, _ = _notes_gws(["tasks", "tasklists", "list", "--format", "json"])
+    body = _json_tail(out) if rc == 0 else None
+    lists = (body or {}).get("items", []) if isinstance(body, dict) else []
+    for lst in lists:
+        if str(lst.get("title") or "") == _NOTES_LIST_TITLE:
+            return str(lst.get("id"))
+    # first use — create the list
+    rc, out, _ = _notes_gws(["tasks", "tasklists", "insert", "--json",
+                             json.dumps({"title": _NOTES_LIST_TITLE}), "--format", "json"])
+    body = _json_tail(out) if rc == 0 else None
+    return str(body.get("id")) if isinstance(body, dict) and body.get("id") else None
+
+
+def _notes_push(text: str) -> str | None:
+    """Create one Tasks row for a note. Returns the remote task id (read back
+    from the insert response) or None on failure — the note stays local and
+    the next pull pass retries the push."""
+    try:
+        tid = _notes_tasklist_id()
+        if not tid:
+            return None
+        lines = text.split("\n", 1)
+        payload = {"title": lines[0].strip()[:1000] or "(note)"}
+        if len(lines) > 1 and lines[1].strip():
+            payload["notes"] = lines[1].strip()
+        rc, out, _ = _notes_gws(["tasks", "tasks", "insert", "--params",
+                                 json.dumps({"tasklist": tid}), "--json",
+                                 json.dumps(payload), "--format", "json"])
+        body = _json_tail(out) if rc == 0 else None
+        return str(body.get("id")) if isinstance(body, dict) and body.get("id") else None
+    except Exception:  # noqa: BLE001 — a sync failure must never lose a local jot
+        return None
+
+
+def _notes_pull() -> list[dict]:
+    """Two-way sync pass (must hold _NOTES_LOCK):
+    1. import Tasks rows we haven't seen (jots made in the phone app),
+    2. adopt remote edits (title/body) and the checked-off state,
+    3. tombstone local notes whose task was deleted on the phone — only when
+       the list call SUCCEEDED, so a gws hiccup never wipes local notes,
+    4. push local notes that never made it to Tasks."""
+    notes = _notes_load()
+    tid = _notes_tasklist_id()
+    if not tid:
+        return notes
+    rc, out, _ = _notes_gws(["tasks", "tasks", "list", "--params", json.dumps(
+        {"tasklist": tid, "maxResults": 100, "showCompleted": True}), "--format", "json"])
+    body = _json_tail(out) if rc == 0 else None
+    if not isinstance(body, dict):
+        return notes  # remote unreadable — keep local as-is, tombstone nothing
+    remote = {}
+    for t in body.get("items") or []:
+        if isinstance(t, dict) and t.get("id") and not t.get("deleted"):
+            remote[str(t["id"])] = t
+    by_task = {n["task_id"]: n for n in notes if n.get("task_id")}
+    for task_id, t in remote.items():
+        title = str(t.get("title") or "").strip()
+        note_body = str(t.get("notes") or "").strip()
+        text = (title + ("\n" + note_body if note_body else "")).strip()
+        if not text:
+            continue
+        if task_id in by_task:
+            n = by_task[task_id]
+            n["text"] = text
+            n["done"] = t.get("status") == "completed"
+        else:
+            notes.append({"id": _hashlib.sha1((task_id + text).encode()).hexdigest()[:12],
+                          "text": text, "ts": time.time(), "task_id": task_id,
+                          "done": t.get("status") == "completed"})
+    if rc == 0:
+        live = set(remote)
+        notes = [n for n in notes if not n.get("task_id") or n["task_id"] in live]
+        _notes_save(notes)
+    for n in notes:
+        if not n.get("task_id") and not n.get("push_fail"):
+            task_id = _notes_push(n["text"])
+            if task_id:
+                n["task_id"] = task_id
+                _notes_save(notes)
+            else:
+                n["push_fail"] = True  # retry next pass, not every GET
+                _notes_save(notes)
+    return notes
+
+
+@router.get("/notes")
+def notes_get():
+    with _NOTES_LOCK:
+        if time.time() - _NOTES_PULL_T[0] > 60:
+            _NOTES_PULL_T[0] = time.time()
+            try:
+                _notes_pull()
+            except Exception:  # noqa: BLE001 — sync must never 500 the card
+                pass
+        notes = sorted(_notes_load(), key=lambda n: n.get("ts", 0), reverse=True)
+    return {"notes": notes[:200], "total": len(notes), "account": _NOTES_ACCOUNT,
+            "list": _NOTES_LIST_TITLE}
+
+
+@router.post("/notes")
+def notes_add(body: dict = Body(...)):
+    text = str(body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    text = text[:4000]
+    with _NOTES_LOCK:
+        note = {"id": _hashlib.sha1((text + str(time.time())).encode()).hexdigest()[:12],
+                "text": text, "ts": time.time(), "task_id": None, "done": False}
+        notes = _notes_load()
+        notes.append(note)
+        _notes_save(notes)
+        task_id = _notes_push(text)
+        if task_id:
+            note["task_id"] = task_id
+            _notes_save(notes)
+    return {"ok": True, "id": note["id"], "synced": bool(task_id)}
+
+
+@router.delete("/notes")
+def notes_delete(body: dict = Body(...)):
+    nid = str(body.get("id") or "")
+    with _NOTES_LOCK:
+        notes = _notes_load()
+        target = next((n for n in notes if n.get("id") == nid), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="note not found")
+        notes = [n for n in notes if n.get("id") != nid]
+        _notes_save(notes)
+        if target.get("task_id"):
+            try:
+                tid = _notes_tasklist_id()
+                if tid:
+                    _notes_gws(["tasks", "tasks", "delete", "--params", json.dumps(
+                        {"tasklist": tid, "task": target["task_id"]})])
+            except Exception:  # noqa: BLE001 — local delete already done
+                pass
+    return {"ok": True, "removed": nid}
+
+
 # remember/forget fast-paths for /command — no agent call needed
 _REMEMBER_RE = re.compile(r"^(?:/remember|please remember|remember)(?: that|:| this)?\s+(.+)$", re.IGNORECASE | re.DOTALL)
 _FORGET_RE = re.compile(r"^/forget\s+(.+)$", re.IGNORECASE | re.DOTALL)
