@@ -22,8 +22,7 @@ style setup, but any backend that serves the same simple JSON routes works.
 | Goals | Quarterly / monthly / weekly goal sheets + today's task board (add, complete, delegate) |
 | Status & Automation | Live service pings with latency LEDs; auto-remediation pings every 5 min and auto-restarts allowlisted services (cooldown + hourly caps) — everything else queues for one-click APPROVE/DENY with Telegram notify |
 | Agent activity | Cron runs + board task feed for the last 48h |
-| Release board | GitHub releases + CI status for your watched repos |
-| Calendar & Inbox | Google Calendar agenda (create + delete events), Gmail inbox — dual-account |
+| Calendar & Inbox | Google Calendar agenda (create + delete events inline), Gmail inbox — dual-account |
 | Telegram & Voice | Your bots' chats with inline reply, Google Voice texts / missed calls / voicemails with reply-by-email |
 | Money | Live tickers (Yahoo/Binance, no login), Stripe balance & payouts, Webull positions, sparklines |
 | Workshop | Describe an object, the LLM emits structured scene JSON, deterministic 3D renderer builds it — edit parts by prompt |
@@ -60,9 +59,28 @@ npx vite --port 4527
 ```
 
 Open `http://localhost:4527`. The Vite server proxies `/api/plugins/agentos/*`
-to `127.0.0.1:8785`; when the backend isn't running the UI falls back to demo data.
-No configuration is required for a first run — see below to point the deck at
-your own boards, services and agent.
+to `127.0.0.1:8785`. Verify the backend is up with:
+
+```bash
+curl http://127.0.0.1:8785/healthz    # {"ok":true}
+```
+
+**Zero config = you see the deck; data needs setup.** The orb, galaxy, cards,
+tabs and layout all work out of the box — but there is deliberately **no demo
+data**: any card whose backend isn't configured shows its real error state
+instead of fake rows. What each live card needs:
+
+| Card | Needs |
+| --- | --- |
+| Console, Advisor, Daily brief, Todos, Goals | a `hermes` CLI install (or any backend serving the routes in [docs/ADAPTERS.md](docs/ADAPTERS.md)) |
+| Realtime voice + console chat | `OPENROUTER_API_KEY` in Settings → API keys |
+| Gemini TTS / spoken briefs | `GEMINI_API_KEY` |
+| Calendar / Inbox / Google Voice | the `gws` CLI with your Google account |
+| Telegram / db metrics | SSH access to the host that holds them (agentos.yaml) |
+| Status card pings | `services:` list in agentos.yaml |
+
+See [Configuration](#configuration) — your personal topology lives **outside
+the repo** in `~/.hermes/agentos/agentos.yaml`.
 
 ## Configuration
 

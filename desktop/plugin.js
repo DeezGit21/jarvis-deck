@@ -2210,6 +2210,7 @@ function CalendarCard() {
   const [dur, setDur] = useState('45')
   const [adding, setAdding] = useState(false)
   const [addMsg, setAddMsg] = useState(null)
+  const [delBusy, setDelBusy] = useState('')
   const acctNames = accounts.map(a => a.name)
   const acctSel = acct || acctNames[0] || 'personal'
   const fld = 'rounded-md border border-(--ui-accent)/40 bg-[rgba(6,10,16,.6)] px-2 py-1 font-mono text-xs text-(--ui-text-primary) outline-none focus:border-(--ui-accent)'
@@ -2230,6 +2231,16 @@ function CalendarCard() {
     } finally {
       setAdding(false)
     }
+  }
+  // delete path — removes one event by id (same account picker the add flow uses)
+  async function delEvent(e) {
+    if (delBusy) return
+    setDelBusy(e.id)
+    try {
+      await REST('/calendar/event', { method: 'DELETE', body: { account: e.acct, id: e.id } })
+      q.refetch()
+    } catch (err) { /* row stays until next poll shows the truth */ }
+    setDelBusy('')
   }
   return jsx(AoCard, {
     label: 'calendar \u00b7 both accounts',
@@ -2308,6 +2319,18 @@ function CalendarCard() {
                         e.summary,
                         e.calendar && !/primary/i.test(e.calendar) && jsx('span', { className: 'ml-1.5 text-[0.75rem] text-(--ui-text-quaternary)', children: e.calendar })
                       ] }),
+                      e.id && jsx('button', {
+                        type: 'button',
+                        className: 'ao-collapse shrink-0',
+                        title: delBusy === e.id ? 'Deleting\u2026' : 'Delete this event',
+                        style: delBusy === e.id ? { opacity: 0.5 } : undefined,
+                        onClick: ev => {
+                          ev.stopPropagation()
+                          haptic('tap')
+                          delEvent(e)
+                        },
+                        children: '\u2715'
+                      }),
                       e.id && jsx('button', {
                         type: 'button',
                         className: 'ao-collapse shrink-0',
@@ -4973,13 +4996,25 @@ function AutomationCard() {
   return jsx(AoCard, {
     label: 'automation - self-healing',
     delay: 150,
-    right: jsxs('button', {
-      type: 'button',
-      onClick: () => act('/remediation/config', { enabled: !enabled }, 'toggle'),
-      title: 'Auto-fix allowlisted services without asking',
-      className: 'ao-runbtn',
-      style: { color: enabled ? '#3fb950' : 'var(--ui-text-quaternary)' },
-      children: ['AUTO-FIX ', enabled ? 'ON' : 'OFF']
+    right: jsxs(Fragment, {
+      children: [
+        jsx('button', {
+          type: 'button',
+          className: 'ao-runbtn',
+          disabled: busy !== '',
+          onClick: () => act('/remediation/scan', {}, 'scan'),
+          title: 'Ping every watched service right now',
+          children: busy === 'scan' ? 'SCANNING\u2026' : 'SCAN NOW'
+        }),
+        jsx('button', {
+          type: 'button',
+          onClick: () => act('/remediation/config', { enabled: !enabled }, 'toggle'),
+          title: 'Auto-fix allowlisted services without asking',
+          className: 'ao-runbtn ml-2',
+          style: { color: enabled ? '#3fb950' : 'var(--ui-text-quaternary)' },
+          children: ['AUTO-FIX ', enabled ? 'ON' : 'OFF']
+        })
+      ]
     }),
     children: jsxs('div', { className: 'flex flex-col gap-2 overflow-y-auto', children: [
       q.isLoading && jsx(Skel, { h: '5rem' }),

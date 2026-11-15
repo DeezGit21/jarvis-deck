@@ -6,9 +6,16 @@ cd "$(dirname "$0")"
 
 [ -d node_modules ] || npm install
 
+# python3 is missing on many systems (Windows git-bash, some minimal Linux) — fall back to `python`
+PY="$(command -v python3 || command -v python)"
+if [ -z "$PY" ]; then
+  echo "python not found — install Python 3.9+ first" >&2
+  exit 1
+fi
+
 if [ ! -d .venv ]; then
   echo "Creating python virtualenv..."
-  python3 -m venv .venv
+  "$PY" -m venv .venv
 fi
 ./.venv/bin/python -m pip install -q -r requirements.txt
 
