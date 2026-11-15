@@ -3206,22 +3206,33 @@ function ConsoleCard({ compact = false }) {
     const rec = new SR()
     recRef.current = rec
     rec.interimResults = true
-    rec.continuous = false
+    // continuous=true: Chrome otherwise auto-ends recognition after the first
+    // pause even while the button is still held — the second half of a long
+    // hold silently went deaf. We stop it ourselves on key release.
+    rec.continuous = true
     rec.lang = 'en-US'
     let finalText = ''
+    let lastInterim = ''
     rec.onresult = ev => {
-      let interim = ''
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        const t = ev.results[i][0].transcript
-        if (ev.results[i].isFinal) finalText += t + ' '
-        else interim += t
+        if (ev.results[i].isFinal) finalText += ev.results[i][0].transcript + ' '
       }
-      setInput((finalText + interim).trim())
+      lastInterim = ''
+      for (let i = 0; i < ev.results.length; i++) {
+        if (!ev.results[i].isFinal) lastInterim += ev.results[i][0].transcript
+      }
+      setInput((finalText + lastInterim).trim())
     }
     rec.onend = () => {
       setListening(false)
       OrbBus.set(ConsoleStore.busy ? 'thinking' : 'idle')
-      if (finalText.trim()) sendVoice(finalText.trim())
+      // Chrome can end without flushing a final result — the interim text IS
+      // what the user said; dropping it made release look like a no-op.
+      const said = (finalText.trim() + ' ' + lastInterim.trim()).trim()
+      if (said) sendVoice(said)
+      // Still holding? (Chrome self-ended on silence / length cap) — resume
+      // so one continuous hold keeps listening across its internal restarts.
+      if (spaceDownRef.current) setTimeout(() => { if (spaceDownRef.current && !listeningRef.current) startVoice() }, 120)
     }
     rec.onerror = () => {
       setListening(false)
@@ -3234,24 +3245,31 @@ function ConsoleCard({ compact = false }) {
     rec.start()
   }
 
-  // Hold-spacebar push-to-talk: press Space anywhere (outside a text field)
-  // to start listening, release to stop + send. Reuses startVoice's flow —
-  // rec.onend sends the final transcript.
+  // Hold-spacebar push-to-talk: press Space anywhere to start listening,
+  // release to stop + send. Works even when a text field has focus as long
+  // as that field is EMPTY — a focused-but-empty console input otherwise
+  // eats the keypress and Chrome scrolls the hidden field into view (the
+  // 'page jumped to the console card' bug). A field with text in it keeps
+  // its spaces: you're typing, not talking.
   const listeningRef = useRef(false)
   listeningRef.current = listening
   const startVoiceRef = useRef(null)
   startVoiceRef.current = startVoice
+  const spaceDownRef = useRef(false)
   useEffect(() => {
     if (!micOk) return
     const isTyping = t => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
     const onKey = e => {
       if (e.code !== 'Space' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
-      if (isTyping(e.target)) return
+      if (isTyping(e.target) && e.target.value) return
       e.preventDefault()
+      spaceDownRef.current = true
       if (!listeningRef.current) startVoiceRef.current()
     }
     const onKeyUp = e => {
-      if (e.code !== 'Space' || isTyping(e.target)) return
+      if (e.code !== 'Space') return
+      if (isTyping(e.target) && e.target.value) return
+      spaceDownRef.current = false
       if (listeningRef.current && recRef.current) { try { recRef.current.stop() } catch { /* ignore */ } }
     }
     window.addEventListener('keydown', onKey)
