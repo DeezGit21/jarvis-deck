@@ -172,18 +172,19 @@ Shipped and working:
 - [x] Neural orb (state-driven plasma core + neural web, dead-center of the galaxy)
 - [x] Memory galaxy (2D canvas, clustered, node action panel)
 - [x] Realtime voice: push-to-talk → sentence-streamed replies → streaming TTS (~1s to first sound), edge/Gemini/Fish providers, contextual spoken acks, barge-in
-- [x] Console with `/`-commands, rolling session memory, and 1–3s fast-path answers for dashboard data questions
+- [x] Console with `/`-commands, rolling session memory, and 1–3s fast-path answers for dashboard and card data questions
 - [x] Auto-remediation: scanner + allowlisted auto-restarts + approval queue + Telegram notify
 - [x] Persistent memory card (`remember that…` / `/forget`)
 - [x] Goals tab (goal sheets + today board), advisor FIX handoff
 - [x] Calendar / Inbox / Telegram / Google Voice cards with inline replies
+- [x] Card fastpaths: clicking an email/calendar/Telegram/Voice row summarizes it in ~1–4 s — one LLM completion over pre-warmed data, never a 2–5 min agent turn; real actions still get the full agent. A header badge shows *warming up* while the first prep pass runs
 - [x] Money tab: tickers, Stripe, Webull (browser-session auth), sparklines
 - [x] Workshop 3D scene builder
 - [x] HUD companion overlay (`npm run hud`)
 - [x] Fresh-user launchers (`start.sh` / `start.cmd`), zero-config first boot
 - [x] Agent-adapter docs ([docs/ADAPTERS.md](docs/ADAPTERS.md))
 - [x] Standalone realtime-TTS demo in `tts/` (merged in from Jarvis-Real-Time-TTS) with local agent execution via `hermes -z` + spoken delegation acks
-- [x] Tagged [v0.1.0](https://github.com/DeezGit21/jarvis-deck/releases/tag/v0.1.0)
+- [x] Tagged [v0.3.0](https://github.com/DeezGit21/jarvis-deck/releases/tag/v0.3.0)
 
 ## License
 
