@@ -240,6 +240,9 @@ html.ao-companion, html.ao-companion body, html.ao-companion #root { background:
 
 /* --- fixed-height grid cells: cards fill their cell, content scrolls --- */
 .ao-grid12 > div { min-width: 0; min-height: 0; }
+.ao-grid12 > div[data-dragging] { z-index: 60; opacity: .92; box-shadow: 0 18px 50px rgba(0,0,0,.55); cursor: grabbing; }
+body.ao-dragging-any { user-select: none; -webkit-user-select: none; cursor: grabbing; }
+body.ao-dragging-any * { cursor: grabbing !important; }
 .ao-grid12 .ao-card { height: 100%; display: flex; flex-direction: column; }
 .ao-grid12 .ao-card .ao-body { flex: 1; min-height: 0; }
 .ao-grid12 .ao-card .ao-body-inner { height: 100%; overflow-y: auto; }
@@ -5567,6 +5570,8 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
   const [dragging, setDragging] = useState(null)
   // last card the dragged card swapped with this gesture — live-reorder throttle
   const liveSwap = useRef(null)
+  // homescreen-style press-drag state (mouse/pen) — see startPtrDrag
+  const ptrDrag = useRef(null)
   // Grab-handle drag is ALWAYS on: pressing ⠿ arms only that card as draggable
   // for the life of the gesture, so row clicks and text selection keep working.
   const [armed, setArmed] = useState(null)
@@ -5651,6 +5656,120 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
     persist({ ...layout, order: next })
   }
 
+  // Homescreen-style drag: press ANYWHERE on a card (except buttons, inputs,
+  // canvas and other interactive controls) and move — the card lifts, follows
+  // the cursor, and the grid reflows live (swap over a card; insert into empty
+  // space). Mouse/pen only; touch keeps scroll and uses the ⠿ handle.
+  // Reads layout through layoutRef so long-lived window listeners never
+  // compute from a stale order.
+  function startPtrDrag(e, id, gridEl) {
+    if (e.button !== 0 || customize || ptrDrag.current) return
+    const t = e.target
+    if (t.closest && t.closest('button, input, textarea, select, a, iframe, canvas, [contenteditable="true"], .ao-wbtn, .ao-resize')) return
+    const st = { id, gridEl, sx: e.clientX, sy: e.clientY, active: false, tx: 0, ty: 0, bx: 0, by: 0, el: null, touchTimer: null }
+    ptrDrag.current = st
+    const swapLive = (fromId, toId) => {
+      const order = layoutRef.current.order.filter(x => x !== fromId)
+      order.splice(Math.max(0, order.indexOf(toId)), 0, fromId)
+      persist({ ...layoutRef.current, order })
+    }
+    const insertAt = (fromId, idx) => {
+      const rest = layoutRef.current.order.filter(x => x !== fromId)
+      const next = rest.slice()
+      next.splice(Math.max(0, Math.min(rest.length, idx)), 0, fromId)
+      if (next.join('\u0000') === layoutRef.current.order.join('\u0000')) return
+      persist({ ...layoutRef.current, order: next })
+    }
+    const begin = () => {
+      if (ptrDrag.current !== st || st.active) return
+      st.el = gridEl.querySelector('[data-widget="' + id + '"]')
+      if (!st.el) { cleanup(); return }
+      const r = st.el.getBoundingClientRect()
+      st.bx = r.left; st.by = r.top
+      st.active = true
+      dragId.current = id
+      liveSwap.current = null
+      setDragging(id)
+      st.el.style.pointerEvents = 'none' // keep the cursor's hit-test on the cards BELOW
+      document.body.classList.add('ao-dragging-any')
+    }
+    const apply = (x, y) => {
+      st.tx = x - st.bx; st.ty = y - st.by
+      st.el.style.transform = 'translate(' + st.tx.toFixed(1) + 'px,' + st.ty.toFixed(1) + 'px) scale(1.02)'
+    }
+    const rebase = (x, y) => {
+      // after a live reorder the card's slot moved — re-stick it under the cursor
+      requestAnimationFrame(() => {
+        if (ptrDrag.current !== st || !st.active || !st.el) return
+        const r = st.el.getBoundingClientRect()
+        st.bx = r.left - st.tx; st.by = r.top - st.ty
+        apply(x, y)
+      })
+    }
+    const hit = (x, y) => {
+      const under = document.elementFromPoint(x, y)
+      const target = under && under.closest ? under.closest('[data-widget]') : null
+      if (target && target.dataset.widget !== st.id) {
+        const tid = target.dataset.widget
+        if (liveSwap.current !== tid) {
+          liveSwap.current = tid
+          // cursor on the right half of the target = insert AFTER it
+          const r0 = target.getBoundingClientRect()
+          let toId = tid
+          if (x > r0.left + r0.width / 2) {
+            const rest = layoutRef.current.order.filter(w => w !== st.id)
+            const i = rest.indexOf(tid)
+            if (i > -1 && i < rest.length - 1) toId = rest[i + 1]
+          }
+          swapLive(st.id, toId)
+          rebase(x, y)
+        }
+        return
+      }
+      const gr = gridEl.getBoundingClientRect()
+      if (x < gr.left || x > gr.right || y < gr.top || y > gr.bottom) return
+      let idx = 0
+      for (const c of gridEl.children) {
+        if (!c.dataset || !c.dataset.widget || c.dataset.widget === st.id) continue
+        const r = c.getBoundingClientRect()
+        if (y > r.bottom || (y >= r.top && x > r.left + r.width / 2)) idx++
+      }
+      const token = 'gap' + idx
+      if (liveSwap.current !== token) { liveSwap.current = token; insertAt(st.id, idx); rebase(x, y) }
+    }
+    const onMove = ev => {
+      if (ptrDrag.current !== st) return
+      if (!st.active) {
+        const dist = Math.hypot(ev.clientX - st.sx, ev.clientY - st.sy)
+        if (st.touchTimer) { if (dist > 10) cleanup(); return } // touch move before hold = scroll
+        if (dist > 6) begin()
+        else return
+      }
+      apply(ev.clientX, ev.clientY)
+      hit(ev.clientX, ev.clientY)
+    }
+    const onUp = () => { if (st.active) haptic('tap'); cleanup() }
+    const cleanup = () => {
+      if (st.touchTimer) { clearTimeout(st.touchTimer); st.touchTimer = null }
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      if (st.active && st.el) { st.el.style.transform = ''; st.el.style.pointerEvents = '' }
+      document.body.classList.remove('ao-dragging-any')
+      if (st.active) { dragId.current = null; liveSwap.current = null; setDragging(null); disarm() }
+      if (ptrDrag.current === st) ptrDrag.current = null
+    }
+    if (e.pointerType === 'mouse' || e.pointerType === 'pen') {
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+    } else {
+      st.touchTimer = setTimeout(() => { st.touchTimer = null; begin() }, 350)
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onUp)
+    }
+  }
+
   const hidden = new Set(layout.hidden)
   if (dockPinned) hidden.add('console') // the pinned dock owns the console when active
 
@@ -5694,6 +5813,7 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
         style: { gridColumn: 'span ' + (narrow ? Math.min(size.w, 4) : size.w), gridRow: 'span ' + size.h },
         'data-dragging': isDragging ? '1' : undefined,
         draggable: (customize || armed === id) ? 'true' : undefined,
+        onPointerDown: e => startPtrDrag(e, id, e.currentTarget.parentElement),
         onDragStart: e => {
           if (!customize && armedRef.current !== id) return
           dragId.current = id
