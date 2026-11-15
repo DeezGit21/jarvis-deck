@@ -1048,7 +1048,10 @@ def _openrouter_complete(messages: list, timeout: int = 40) -> str:
     key = _read_env().get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY missing — add it in Settings -> API keys")
-    payload = json.dumps({"model": _VOICE_MODEL, "messages": messages}).encode("utf-8")
+    # reasoning effort low: glm-5.3-flash otherwise burns ~4k hidden reasoning
+    # tokens before writing, tripling the latency — low gives 1-3s total.
+    payload = json.dumps({"model": _VOICE_MODEL, "messages": messages,
+                          "max_tokens": 1200, "reasoning": {"effort": "low"}}).encode("utf-8")
     req = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions", data=payload,
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json",
