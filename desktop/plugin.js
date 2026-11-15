@@ -5640,10 +5640,49 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
     persist({ ...layout, order })
   }
 
+  // Move a card to an absolute flow index — used when dropping on empty grid
+  // space, where there is no target card to swap with.
+  function moveTo(fromId, idx) {
+    if (!fromId) return
+    const rest = layout.order.filter(x => x !== fromId)
+    const next = rest.slice()
+    next.splice(Math.max(0, Math.min(rest.length, idx)), 0, fromId)
+    if (next.join('\u0000') === layout.order.join('\u0000')) return
+    persist({ ...layout, order: next })
+  }
+
   const hidden = new Set(layout.hidden)
   if (dockPinned) hidden.add('console') // the pinned dock owns the console when active
 
-  return jsxs('div', { className: 'ao-grid12', children: [
+  return jsxs('div', { className: 'ao-grid12', onDragOver: e => {
+    // Drop targeting for EMPTY grid space: when the cursor is over a gap or
+    // open area (not a card), compute the flow index from cursor position and
+    // move the dragged card there live — so "drag it to the right side" lands.
+    if (!dragId.current) return
+    const t = e.target
+    if (t && t.closest && t.closest('[data-widget]')) return // card handler owns this event
+    e.preventDefault()
+    const drag = dragId.current
+    const x = e.clientX, y = e.clientY
+    let idx = 0
+    for (const c of e.currentTarget.children) {
+      if (!c.dataset || !c.dataset.widget || c.dataset.widget === drag) continue
+      const r = c.getBoundingClientRect()
+      // cursor past this card = below it, or beside it (right of midpoint in its band)
+      if (y > r.bottom || (y >= r.top && x > r.left + r.width / 2)) idx++
+    }
+    const token = 'gap' + idx
+    if (liveSwap.current === token) return
+    liveSwap.current = token
+    moveTo(drag, idx)
+  }, onDrop: e => {
+    if (!dragId.current) return
+    e.preventDefault()
+    dragId.current = null
+    liveSwap.current = null
+    setDragging(null)
+    disarm()
+  }, children: [
     layout.order.filter(id => !hidden.has(id)).map(id => {
       const w = WIDGETS[id]
       const size = (layout.sizes || {})[id] || { w: w.span, h: w.rows }
