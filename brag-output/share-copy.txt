@@ -1,1 +1,0 @@
-Your agent has a cockpit now. JARVIS Deck is an open-source control deck for your personal AI agent — a plasma neural orb, a 3D galaxy of everything it's working on, and push-to-talk voice. Runs local, boots with one command: github.com/DeezGit21/jarvis-deck
