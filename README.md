@@ -8,6 +8,24 @@ agent is working on, and a realtime voice loop: hold a button, talk, and
 Built as a local-first companion for a [Hermes Agent](https://github.com/NousResearch/hermes-agent)
 style setup, but any backend that serves the same simple JSON routes works.
 
+<p align="center">
+  <img src="docs/hero-overview.png" width="940" alt="JARVIS Deck overview — plasma neural orb at the center of a memory galaxy, action bar on top">
+</p>
+
+## Why it's different
+
+- **~1 second to first spoken word.** The classic "talk to your computer" demo
+  feels dead because it does full LLM turn → full TTS synthesis → *then* sound.
+  This one streams the reply sentence-by-sentence and starts speaking each
+  sentence while the rest is still generating.
+- **Real actions, not just chat.** Requests that need a real action (restart a
+  service, run a script, query the CRM) hand off to the full agent loop.
+  Jarvis acknowledges out loud — *"Delegating to Hermes Agent, sir."* — while
+  it works, then speaks a summary of the result.
+- **Zero config boots; no fake data, ever.** The orb, galaxy, cards and layout
+  work out of the box, and every unconfigured card shows its **real error
+  state** instead of demo rows. Your data appears when you connect it.
+
 ## What's on the deck
 
 | Surface | What it does |
@@ -38,8 +56,11 @@ cd jarvis-deck
 ./start.sh        # Windows: double-click start.cmd (or run it in a terminal)
 ```
 
-The launcher creates a python venv, installs both dependency sets, builds the
-frontend and starts both processes. Prefer manual steps?
+> [!TIP]
+> The launcher creates a python venv, installs both dependency sets, builds
+> the frontend and starts both processes — nothing else to install by hand.
+
+Prefer manual steps?
 
 ```bash
 npm install                      # frontend deps
@@ -63,10 +84,12 @@ to `127.0.0.1:8785`. Verify the backend is up with:
 curl http://127.0.0.1:8785/healthz    # {"ok":true}
 ```
 
-**Zero config = you see the deck; data needs setup.** The orb, galaxy, cards,
-tabs and layout all work out of the box — but there is deliberately **no demo
-data**: any card whose backend isn't configured shows its real error state
-instead of fake rows. What each live card needs:
+## What each live card needs
+
+> [!NOTE]
+> **Zero config = you see the deck; data needs setup.** There is deliberately
+> **no demo data**: any card whose backend isn't configured shows its real
+> error state instead of fake rows.
 
 | Card | Needs |
 | --- | --- |
@@ -77,8 +100,8 @@ instead of fake rows. What each live card needs:
 | Telegram / db metrics | SSH access to the host that holds them (agentos.yaml) |
 | Status card pings | `services:` list in agentos.yaml |
 
-See [Configuration](#configuration) — your personal topology lives **outside
-the repo** in `~/.hermes/agentos/agentos.yaml`.
+Your personal topology lives **outside the repo** — see
+[Configuration](#configuration).
 
 ## Configuration
 
@@ -119,6 +142,29 @@ React 19 + Vite + TypeScript-style JSX · Tailwind 4 · plain 2D-canvas and WebG
 polling through a tiny SDK stub (`src/hermes-plugin-sdk.js`), so the frontend
 also runs inside the Hermes desktop app as a plugin unmodified.
 
+## Standalone voice demo (`tts/`)
+
+The realtime-TTS loop was originally its own repo
+([DeezGit21/Jarvis-Real-Time-TTS](https://github.com/DeezGit21/Jarvis-Real-Time-TTS),
+now archived — that link redirects here). It lives in [`tts/`](tts/README.md)
+as a fully self-contained demo: push-to-talk → OpenRouter streaming →
+sentence-by-sentence streaming TTS on its own port, no dashboard required.
+
+<p align="center">
+  <img src="tts/docs/console-demo.png" width="640" alt="The tts demo console — a streamed reply appearing sentence by sentence">
+</p>
+
+Requests that need a real action hand off to the Hermes one-shot agent
+(`hermes -z`) — Jarvis says *"Delegating to Hermes Agent, sir."* or
+*"Hermes executing now, sir."* while it works, then speaks a summary of the
+result.
+
+```bash
+cd tts
+pip install -r requirements.txt
+python server.py          # http://127.0.0.1:8899
+```
+
 ## Status
 
 Shipped and working:
@@ -138,23 +184,6 @@ Shipped and working:
 - [x] Agent-adapter docs ([docs/ADAPTERS.md](docs/ADAPTERS.md))
 - [x] Standalone realtime-TTS demo in `tts/` (merged in from Jarvis-Real-Time-TTS) with local agent execution via `hermes -z` + spoken delegation acks
 - [x] Tagged [v0.1.0](https://github.com/DeezGit21/jarvis-deck/releases/tag/v0.1.0)
-
-## Standalone voice demo (`tts/`)
-
-The realtime-TTS loop was originally its own repo
-([DeezGit21/Jarvis-Real-Time-TTS](https://github.com/DeezGit21/Jarvis-Real-Time-TTS),
-now archived — that link redirects here). It lives in [`tts/`](tts/README.md)
-as a fully self-contained demo: push-to-talk → OpenRouter streaming →
-sentence-by-sentence streaming TTS on its own port, no dashboard required.
-Requests that need a real action hand off to the Hermes one-shot agent
-(`hermes -z`) — Jarvis says *"Delegating to Hermes Agent, sir."* while it
-works, then speaks a summary of the result.
-
-```bash
-cd tts
-pip install -r requirements.txt
-python server.py          # http://127.0.0.1:8899
-```
 
 ## License
 
