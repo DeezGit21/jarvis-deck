@@ -362,6 +362,18 @@ body.ao-dragging-any * { cursor: grabbing !important; }
 .ao-orb-panel > span { overflow: hidden; text-overflow: ellipsis; }
 .ao-orb-panel:hover { border-color: var(--ui-accent); color: var(--ui-text-primary); }
 
+/* --- warm-up chip: backend prep layer is pre-loading card data --- */
+.ao-warmchip { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px;
+  border-radius: 999px; border: 1px solid color-mix(in srgb, var(--ui-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--ui-accent) 9%, transparent);
+  color: var(--ui-text-secondary); font: 500 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap; }
+.ao-warm-dot { width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--ui-accent); color: var(--ui-accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--ui-accent) 70%, transparent);
+  animation: aoPulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .ao-warm-dot { animation: none; } }
+
 /* --- mobile: no horizontal pan, ever --- */
 /* The page scroller must never pan sideways — content wider than the viewport
    is clipped instead of pushing cards off-screen left (the mobile cutoff bug). */
@@ -6590,6 +6602,7 @@ function AgentosPage() {
           })
         ] }),
         jsxs('div', { className: 'flex flex-wrap items-center gap-4', children: [
+          jsx(WarmBadge, {}),
           jsxs('div', { className: 'flex items-center gap-1.5', title: 'accent theme', children: [
             Object.entries(AO_THEMES).map(([name, col]) =>
               jsx('span', {
@@ -6680,6 +6693,48 @@ function AgentosPage() {
       jsx(Spotlight, { open: spotOpen, onClose: () => setSpotOpen(false) }),
       jsx(ServiceDrawer, { svcs, open: svcOpen, onClose: () => setSvcOpen(false) }),
       mode && jsx(ModeOverlay, { mode })
+    ]
+  })
+}
+
+// ------------------------------------------------------------ warm-up badge
+// The backend's prep thread pre-loads every card cache + email bodies ~20s
+// after boot. Until the first full pass lands, card clicks pay gather costs —
+// surface it so a fresh page / backend restart doesn't read as "Jarvis is
+// slow". Polls fast while warming, backs off to a slow heartbeat once ready
+// (picking up a backend restart within ~30s).
+
+function usePrepStatus() {
+  const [ready, setReady] = useState(null) // null = unknown → show nothing yet
+  useEffect(() => {
+    let stop = false
+    let timer = null
+    async function check() {
+      try {
+        const d = await REST('/prep/status')
+        setReady(!!(d && d.ready))
+        if (!stop) timer = setTimeout(check, d && d.ready ? 30000 : 4000)
+      } catch {
+        setReady(false)
+        if (!stop) timer = setTimeout(check, 4000)
+      }
+    }
+    check()
+    return () => { stop = true; if (timer) clearTimeout(timer) }
+  }, [])
+  return ready
+}
+
+function WarmBadge() {
+  const ready = usePrepStatus()
+  if (ready !== false) return null
+  return jsx('div', {
+    className: 'ao-warmchip',
+    role: 'status',
+    title: 'Prep layer is pre-loading card data — clicks answer fastest once this clears',
+    children: [
+      jsx('span', { className: 'ao-warm-dot', 'aria-hidden': 'true' }),
+      jsx('span', { children: 'warming up \u2014 prepping cards for fast answers' })
     ]
   })
 }

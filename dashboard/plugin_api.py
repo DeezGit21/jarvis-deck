@@ -118,7 +118,7 @@ def _psql(sql: str, timeout: int = 25) -> list[list[str]]:
     # SQL goes over ssh stdin, output as CSV — nothing shell-special in the
     # remote command line or the payload.
     args = [
-        "ssh", str(_DB_CFG.get("ssh_host", "db-host")),
+        _ssh_bin(), str(_DB_CFG.get("ssh_host", "db-host")),
         "psql", "-U", str(_DB_CFG.get("psql_user", "postgres")),
         "-d", str(_DB_CFG.get("psql_db", "postgres")),
         "-t", "--csv",
@@ -454,10 +454,22 @@ def calendar_add(body: dict = Body(...)):
             "verified": verified}
 
 
+def _ssh_bin() -> str:
+    """Explicit ssh path: a bare 'ssh' can resolve to the Hermes MSIX
+    app-container copy (WindowsApps ... git .../ssh.exe), which WinError 5s
+    any non-app process that spawns it. System OpenSSH always exists."""
+    if os.name == "nt":
+        sys_ssh = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                               "System32", "OpenSSH", "ssh.exe")
+        if os.path.isfile(sys_ssh):
+            return sys_ssh
+    return shutil.which("ssh") or "ssh"
+
+
 def _ssh_py(script: str, timeout: int = 30) -> tuple[int, str, str]:
     """Run a python3 snippet on the gateway host — script feeds via stdin
     (`python3 -`), same pattern as _psql, so no remote-shell quoting issues."""
-    args = ["ssh", str(_DB_CFG.get("ssh_host", "db-host")), "python3", "-"]
+    args = [_ssh_bin(), str(_DB_CFG.get("ssh_host", "db-host")), "python3", "-"]
     try:
         p = subprocess.run(args, input=script, capture_output=True, text=True, timeout=timeout,
                            creationflags=_NO_WINDOW)
@@ -1020,6 +1032,41 @@ def _brief_context() -> str:
         parts.append("## Open tasks\n" + json.dumps(todos()["tasks"], default=str))
     except HTTPException as e:
         parts.append(f"## Open tasks\n(unavailable: {e.detail})")
+    try:  # slim card data so spoken dashboard questions about these cards answer instantly
+        ag = []
+        for a in (calendar_agenda().get("accounts") or []):
+            for e in a.get("items") or []:
+                ag.append({"event": e.get("summary"), "when": e.get("when"),
+                           "all_day": e.get("all_day"), "calendar": e.get("calendar"),
+                           "account": a.get("name")})
+        parts.append("## Calendar\n" + json.dumps(ag, default=str))
+    except Exception:  # noqa: BLE001
+        parts.append("## Calendar\n(unavailable)")
+    try:
+        vx = []
+        for a in (voice_activity().get("accounts") or []):
+            for v in (a.get("items") or [])[:6]:
+                vx.append({"kind": v.get("kind"), "contact": v.get("contact"),
+                           "snippet": v.get("snippet"), "date": v.get("date"),
+                           "account": a.get("name")})
+        parts.append("## Google Voice (texts/calls, 30d)\n" + json.dumps(vx, default=str))
+    except Exception:  # noqa: BLE001
+        parts.append("## Google Voice\n(unavailable)")
+    try:
+        mx = []
+        for a in (mail_inbox().get("accounts") or []):
+            for m in (a.get("items") or [])[:8]:
+                mx.append({"from": m.get("from"), "subject": m.get("subject"),
+                           "date": m.get("date"), "account": a.get("name")})
+        parts.append("## Inbox (unread, recent)\n" + json.dumps(mx, default=str))
+    except Exception:  # noqa: BLE001
+        parts.append("## Inbox\n(unavailable)")
+    try:
+        tx = [{"title": c.get("title"), "messages": c.get("n"), "last": c.get("ts"),
+               "preview": c.get("preview")} for c in (telegram_chats().get("chats") or [])[:8]]
+        parts.append("## Telegram (with your bot)\n" + json.dumps(tx, default=str))
+    except Exception:  # noqa: BLE001
+        parts.append("## Telegram\n(unavailable)")
     planner_snap = CACHE / f"planner-{_local_date()}.json"
     try:
         if planner_snap.exists():
@@ -1333,6 +1380,211 @@ def _mail_cmd(query: str) -> dict | None:
             "date": _local_date(), "fastpath": "mail"}
 
 
+# ---- card click fastpaths: calendar / telegram / voice / mail-triage --------
+# Same contract as _mail_cmd: purpose-built data read + ONE completion, never
+# the 2-5 min agent turn. Each returns None when the query isn't its shape.
+
+def _fast_reply(reply: str, fastpath: str, cap: int = 600) -> dict:
+    speech = re.sub(r"\s+", " ", reply).strip()
+    if len(speech) > cap:
+        cut = speech.rfind(". ", 0, 300)
+        speech = speech[: cut + 1 if cut > 120 else cap]
+        if speech and not speech.endswith(((".", "!", "?"))):
+            speech += "."
+    return {"ok": True, "reply": reply, "speech": speech,
+            "date": _local_date(), "fastpath": fastpath}
+
+
+_CAL_EVENT_RE = re.compile(r'\btell me about the "([^"]{2,120})" event\b', re.I)
+_CAL_PLAN_RE = re.compile(r"\bread my calendar\b.{0,120}?\b(plan my day|time blocks|conflicts)", re.I | re.S)
+_CAL_PROMPT = """Calendar events (both accounts, next few days):
+{events}
+
+You are {persona}, a crisp butler. Answer in plain text (no markdown), at most 90 words.
+Use ONLY the events above — quote actual times. If none apply, say so plainly."""
+
+
+def _agenda_rows() -> list[dict]:
+    try:
+        d = json.loads((CACHE / "gws-agenda.json").read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    out = []
+    for a in d.get("accounts") or []:
+        for e in a.get("items") or []:
+            out.append({"event": e.get("summary"), "when": e.get("when"),
+                        "all_day": e.get("all_day"), "calendar": e.get("calendar"),
+                        "account": a.get("name")})
+    return out
+
+
+def _cal_cmd(query: str) -> dict | None:
+    ql = query.lower()
+    rows = _agenda_rows()
+    ev = _CAL_EVENT_RE.search(query)
+    if ev:
+        needle = ev.group(1).lower()
+        hits = [r for r in rows if needle in str(r.get("event") or "").lower()]
+        if not hits:
+            return {"ok": True, "reply": "That event isn't on the loaded agenda, sir — "
+                    "it may be older than the next few days.", "date": _local_date(),
+                    "fastpath": "calendar"}
+        events = json.dumps(hits, default=str)
+        reply = _openrouter_complete([
+            {"role": "system", "content": _CAL_PROMPT.format(events=events, persona=_PERSONA)},
+            {"role": "user", "content": "Tell me about this event: " + ev.group(1)}], timeout=30)
+    elif _CAL_PLAN_RE.search(ql) and rows:
+        events = json.dumps(rows, default=str)
+        reply = _openrouter_complete([
+            {"role": "system", "content": _CAL_PROMPT.format(events=events, persona=_PERSONA)},
+            {"role": "user", "content": "Plan my day: time blocks, conflicts, and what to push."}], timeout=40)
+    else:
+        return None
+    if not reply:
+        return None
+    return _fast_reply(reply, "calendar")
+
+
+_TG_CMD_RE = re.compile(r'\bopen my telegram conversation "([^"]{2,120})"', re.I)
+TG_THREAD_TMPL = """
+import sqlite3, json
+c = sqlite3.connect('/home/d/.hermes/state.db')
+title = __TITLE__
+row = c.execute("select id from sessions where source='telegram' and archived=0 and hidden=0 "
+                "and title=? order by last_activity_at desc limit 1", (title,)).fetchone()
+if not row:
+    print(json.dumps([]))
+else:
+    ms = c.execute("select role, timestamp, content from messages where session_id=? "
+                   "and active=1 and display_kind is null order by timestamp", (row[0],)).fetchall()
+    print(json.dumps([{'role': r[0], 'ts': r[1], 'text': (r[2] or '')[:500]} for r in ms[-40:]]))
+"""
+_TG_PROMPT = """Telegram thread with your bot ("{title}"), oldest last:
+{thread}
+
+You are {persona}, a crisp butler. Summarize in plain text (no markdown), at most 90 words:
+what was decided / asked, and what is still open. Say "mostly small talk" if that's the truth."""
+
+
+def _tg_thread(title: str) -> list[dict]:
+    rc, out, _err = _ssh_py(TG_THREAD_TMPL.replace("__TITLE__", json.dumps(title)), timeout=30)
+    if rc != 0:
+        return []
+    idx = out.find("[")
+    if idx < 0:
+        return []
+    try:
+        return json.loads(out[idx:])
+    except json.JSONDecodeError:
+        return []
+
+
+def _tg_cmd(query: str) -> dict | None:
+    m = _TG_CMD_RE.search(query)
+    if not m:
+        return None
+    title = m.group(1)
+    msgs = _tg_thread(title)
+    if not msgs:
+        return {"ok": True, "reply": "I couldn't load that Telegram thread from the gateway, sir — "
+                "it may have been renamed or archived.", "date": _local_date(), "fastpath": "telegram"}
+    thread = "\n".join(f"[{x.get('ts')}] {x.get('role')}: {x.get('text')}" for x in msgs)
+    reply = _openrouter_complete([
+        {"role": "system", "content": _TG_PROMPT.format(title=title, thread=thread[:12000], persona=_PERSONA)},
+        {"role": "user", "content": "Summarize the thread."}], timeout=30)
+    if not reply:
+        return None
+    return _fast_reply(reply, "telegram")
+
+
+_VOICE_CMD_RE = re.compile(r"\bmy google voice had a (text|missed call|voicemail) with (.+?)\b[\s—-]", re.I)
+_VOICE_PROMPT = """Google Voice {kind} with {contact} (account: {acct}), {date}. The Gmail message body
+contains the conversation:
+{body}
+
+You are {persona}, a crisp butler. Reply in plain text (no markdown):
+1. What they need / what was said — at most 80 words, natural spoken sentences.
+2. A line containing only ---
+3. A short suggested reply (1-3 sentences) IF a response is warranted; otherwise write exactly: NO REPLY NEEDED"""
+
+
+def _voice_cmd(query: str) -> dict | None:
+    m = _VOICE_CMD_RE.search(query)
+    if not m:
+        return None
+    kind, contact = m.group(1).lower(), m.group(2).strip()
+    try:
+        d = json.loads((CACHE / "gws-voice.json").read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        d = {}
+    cfgs = {a["name"].lower(): (a["config_dir"] or "") for a in _gws_accounts()}
+    hit = None
+    for a in d.get("accounts") or []:
+        for v in a.get("items") or []:
+            if kind not in str(v.get("kind") or "").lower():
+                continue
+            if contact.lower() in str(v.get("contact") or "").lower() or str(v.get("contact") or "").lower() in contact.lower():
+                hit = (a.get("name", ""), v)
+                break
+        if hit:
+            break
+    if not hit:
+        return {"ok": True, "reply": "I couldn't find that " + kind + " from " + contact +
+                " in the loaded Google Voice list, sir — it may be older than 30 days.",
+                "date": _local_date(), "fastpath": "voice"}
+    acct, row = hit
+    cfg = cfgs.get(acct.lower(), "")
+    body = ""
+    if row.get("id") and cfg:
+        try:
+            warm = _MAIL_BODIES.get(str(row["id"]))
+            body = warm["body"] if warm else _mail_read_body(cfg, str(row["id"]))
+        except Exception:  # noqa: BLE001
+            body = ""
+    if not body:
+        body = str(row.get("snippet") or "(no content loaded)")
+    reply = _openrouter_complete([
+        {"role": "system", "content": _VOICE_PROMPT.format(
+            kind=kind, contact=row.get("contact") or contact, acct=acct,
+            date=row.get("date") or "unknown", body=body[:6000], persona=_PERSONA)},
+        {"role": "user", "content": "Summarize this " + kind + "."}], timeout=30)
+    if not reply:
+        return None
+    return _fast_reply(reply, "voice")
+
+
+_TRIAGE_RE = re.compile(r"\btriage\b.{0,80}?\b(unread\s+)?(emails?|inbox)\b", re.I | re.S)
+_TRIAGE_PROMPT = """Unread inbox rows across both accounts (subject/from/date):
+{rows}
+
+You are {persona}, a crisp butler. Triage in plain text (no markdown), at most 120 words:
+1) needs a reply today, 2) can wait, 3) noise. Reference actual senders/subjects."""
+
+
+def _triage_cmd(query: str) -> dict | None:
+    if not _TRIAGE_RE.search(query):
+        return None
+    rows = []
+    try:
+        d = json.loads((CACHE / "gws-mail.json").read_text(encoding="utf-8"))
+        for a in d.get("accounts") or []:
+            for m in (a.get("items") or [])[:12]:
+                rows.append({"from": m.get("from"), "subject": m.get("subject"),
+                             "date": m.get("date"), "account": a.get("name")})
+    except (json.JSONDecodeError, OSError):
+        pass
+    if not rows:
+        return {"ok": True, "reply": "The inbox cache is empty right now, sir — give me a few seconds and ask again.",
+                "date": _local_date(), "fastpath": "mail-triage"}
+    listing = json.dumps(rows, default=str)
+    reply = _openrouter_complete([
+        {"role": "system", "content": _TRIAGE_PROMPT.format(rows=listing, persona=_PERSONA)},
+        {"role": "user", "content": "Triage my unread email."}], timeout=30)
+    if not reply:
+        return None
+    return _fast_reply(reply, "mail-triage")
+
+
 # ---------------------------------------------------------------- context prep (warm layer)
 # A background thread keeps the dashboard snapshot AND the unread email bodies
 # warm, so a card click / spoken request only pays for ONE completion (~2-5s)
@@ -1343,6 +1595,7 @@ def _mail_cmd(query: str) -> dict | None:
 _PREP_START_GUARD = [False]
 _MAIL_BODIES: dict = {}  # msg_id -> {"body": str, "t": epoch} — warmed by the prep thread
 _PREP_SECONDS = 300.0
+_PREP_STATE: dict = {"ready": False, "warmed_bodies": 0, "last_pass": 0.0}
 
 
 def _prep_mail_bodies() -> int:
@@ -1375,24 +1628,39 @@ def _prep_mail_bodies() -> int:
 
 
 def _prep_thread_loop():
-    """Every 5 minutes: refresh the inbox cache, warm its bodies, refresh the
-    dashboard snapshot. Staggered 20s after boot so the TTS prewarm wins the
-    first seconds."""
+    """Every 5 minutes: refresh every card cache (inbox, agenda, voice,
+    telegram), warm email bodies, refresh the dashboard snapshot. Staggered
+    20s after boot so the TTS prewarm wins the first seconds. The first full
+    pass flips _PREP_STATE['ready'] — the frontend's 'warming up' badge clears
+    when it does."""
     time.sleep(20)
     while True:
+        for warm in (mail_inbox, calendar_agenda, voice_activity, telegram_chats):
+            try:
+                warm()
+            except Exception:  # noqa: BLE001 — prep must never crash the thread
+                pass
         try:
-            mail_inbox()  # refresh gws-mail.json if its TTL lapsed
-        except Exception:  # noqa: BLE001 — prep must never crash the thread
-            pass
-        try:
-            _prep_mail_bodies()
+            _PREP_STATE["warmed_bodies"] += _prep_mail_bodies()
         except Exception:  # noqa: BLE001
             pass
         try:
             _dash_context(force=True)
         except Exception:  # noqa: BLE001
             pass
+        _PREP_STATE["last_pass"] = time.time()
+        if not _PREP_STATE["ready"]:
+            _PREP_STATE["ready"] = True
         time.sleep(_PREP_SECONDS)
+
+
+@router.get("/prep/status")
+def prep_status():
+    """Warming-up indicator for the frontend: 'ready' once the first full
+    prep pass has loaded every card cache + email bodies + dash snapshot."""
+    age = max(0.0, time.time() - _PREP_STATE["last_pass"]) if _PREP_STATE["last_pass"] else None
+    return {"ok": True, "ready": bool(_PREP_STATE["ready"]),
+            "warmed_bodies": _PREP_STATE["warmed_bodies"], "last_pass_age": age}
 
 
 @router.post("/brief/generate")
@@ -1579,6 +1847,10 @@ def command(body: dict = Body(...)):
     mail_cmd = _mail_cmd(query)  # inbox-card 'summarize email' click — ~5s pipeline
     if mail_cmd:
         return mail_cmd
+    for card_cmd in (_cal_cmd(query), _tg_cmd(query), _voice_cmd(query), _triage_cmd(query)):
+        # calendar / telegram / voice / inbox-triage card clicks — one completion each
+        if card_cmd:
+            return card_cmd
     query = _memory_block(query)
     sid = _deck_session_id()
     argv = ["hermes", "chat", "-Q", "--query-file", "-"]
