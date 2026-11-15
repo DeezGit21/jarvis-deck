@@ -339,10 +339,16 @@ body.ao-dragging-any * { cursor: grabbing !important; }
   color: var(--ui-text-tertiary); text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9), 0 0 12px rgba(0, 0, 0, 0.6);
   pointer-events: none; z-index: 35;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.ao-cap[data-role='you'] { top: -4px; }
-.ao-cap[data-role='jarvis'] { top: 55%; bottom: auto; transform: translate(-50%, -50%); color: #d9f6ff;
+.ao-cap[data-role='you'] { top: -28px; }
+.ao-cap[data-role='jarvis'] { top: 207px; transform: translateX(-50%); color: #d9f6ff;
   font-size: 0.62rem; max-width: 150px; width: 150px;
   text-shadow: 0 0 14px rgba(0, 20, 30, 0.95), 0 1px 4px rgba(0, 0, 0, 0.95), 0 0 22px color-mix(in srgb, var(--ui-accent) 35%, transparent); }
+.ao-cap[data-role='status'] { top: 245px; width: 260px; font-size: 0.6rem; letter-spacing: 0.04em;
+  color: color-mix(in srgb, #a855f7 85%, white 15%);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.95), 0 0 18px color-mix(in srgb, #a855f7 45%, transparent);
+  animation: aoCapPulse 1.6s ease-in-out infinite; }
+@keyframes aoCapPulse { 0%, 100% { opacity: 0.72; } 50% { opacity: 1; } }
+.ao-busy-live { font-variant-numeric: tabular-nums; }
 .ao-orb-panel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   display: inline-flex; align-items: center; gap: 5px; max-width: 110px; padding: 3px 9px;
   border-radius: 999px; border: 1px solid var(--ui-stroke-secondary);
@@ -379,7 +385,7 @@ body.ao-dragging-any * { cursor: grabbing !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ao-in, .ao-led, .ao-skel, .ao-ring, .ao-aurora, .ao-mini-orb { animation: none !important; }
+  .ao-in, .ao-led, .ao-skel, .ao-ring, .ao-aurora, .ao-mini-orb, .ao-cap[data-role='status'] { animation: none !important; }
   .ao-bar > i, .ao-tabline, .ao-grid-flip, .ao-card, .ao-body, .ao-collapse { transition: none !important; }
   .ao-frame { animation: none !important; transform: perspective(520px) rotateY(var(--tilt, 0deg)) !important; }
 }
@@ -756,7 +762,10 @@ const ConsoleStore = {
   emit() { for (const fn of this._subs) { try { fn() } catch { /* ignore */ } } },
   add(m) { this.msgs = [...this.msgs, m]; this.emit() },
   reset() { this.msgs = []; this.emit() },
-  setBusy(b) { this.busy = b; if (!b) this.current = null; this.emit() },
+  setBusy(b) { this.busy = b; if (!b) { this.current = null; this.phase = null } this.emit() },
+  // phase: 'thinking' = voice LLM still streaming, 'hermes' = full agent turn
+  // running (the [[agent]] handoff or a typed command). Drives the live
+  // status line + orb caption so a 1-3 min agent job never looks frozen.
   async send(text) {
     const query = (text || '').trim()
     if (!query || this.busy) return false
@@ -764,6 +773,7 @@ const ConsoleStore = {
     this.current = query
     this.since = Date.now()
     this.setBusy(true)
+    this.phase = 'hermes'
     Tts.ack(ackLineFor(query))
     OrbBus.set(query.startsWith('/') ? 'working' : 'thinking')
     try {
@@ -795,6 +805,7 @@ const ConsoleStore = {
     this.current = query
     this.since = Date.now()
     this.setBusy(true)
+    this.phase = 'thinking'
     Tts.ack(ackLineFor(query))
     OrbBus.set('thinking')
     this._streamAbort = new AbortController()
@@ -834,6 +845,8 @@ const ConsoleStore = {
             Tts.enqueueSpeak(ev.text)
           } else if (ev.t === 'agent') {
             agentCmd = ev.cmd
+            this.phase = 'hermes'
+            this.emit()
           } else if (ev.t === 'err') {
             upsert(full ? full + '\n[error] ' + ev.msg : '[error] ' + ev.msg)
           }
@@ -1752,11 +1765,34 @@ function OrbHud() {
 // Small frames orbiting the orb: tools, connectors, quick actions. Click
 // routes to the app (openExternal) or fires the command through JARVIS.
 
-// Live captions around the orb (reference behavior): your last words render
-// above the orb, JARVIS's reply below — the conversation IS the visualization.
-function OrbCaptions() {
+// Live busy status: phase + elapsed seconds, re-rendered every second while
+// the console is working. Honest signal, not a fake % — agent turns have no
+// progress API, but a ticking clock + phase label proves it's alive.
+function fmtSecs(s) {
+  return s >= 60 ? Math.floor(s / 60) + 'm' + String(s % 60).padStart(2, '0') + 's' : s + 's'
+}
+function useBusyStatus() {
   const [, force] = useState(0)
   useEffect(() => ConsoleStore.subscribe(() => force(v => v + 1)), [])
+  const busy = ConsoleStore.busy
+  useEffect(() => {
+    if (!busy) return undefined
+    const iv = setInterval(() => force(v => v + 1), 1000)
+    return () => clearInterval(iv)
+  }, [busy])
+  return {
+    busy,
+    phase: ConsoleStore.phase,
+    secs: busy && ConsoleStore.since ? Math.max(0, Math.floor((Date.now() - ConsoleStore.since) / 1000)) : 0
+  }
+}
+
+// Live captions around the orb (reference behavior): your last words render
+// above the orb, JARVIS's reply below — the conversation IS the visualization.
+// While Jarvis is busy a third caption ticks the phase + elapsed seconds so a
+// long agent handoff (30-90s+) is visibly working, not frozen.
+function OrbCaptions() {
+  const st = useBusyStatus()
   const msgs = ConsoleStore.msgs
   const last = role => {
     for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === role) return msgs[i].text
@@ -1767,7 +1803,13 @@ function OrbCaptions() {
   const jarvis = last('jarvis')
   return jsxs(Fragment, { children: [
     you && jsx('div', { className: 'ao-cap', 'data-role': 'you', children: clip(you) }),
-    jarvis && jsx('div', { className: 'ao-cap', 'data-role': 'jarvis', children: clip(jarvis) })
+    jarvis && jsx('div', { className: 'ao-cap', 'data-role': 'jarvis', children: clip(jarvis) }),
+    st.busy && jsx('div', {
+      className: 'ao-cap ao-cap-status',
+      'data-role': 'status',
+      children: '\u23F3 ' + (st.phase === 'hermes' ? 'Hermes executing' : 'thinking') + ' \u00B7 ' + fmtSecs(st.secs) +
+        (st.phase === 'hermes' && st.secs >= 45 ? ' \u00B7 agent jobs run 1\u20133 min' : '')
+    })
   ] })
 }
 
@@ -3172,6 +3214,7 @@ function AdvisorCard() {
 // ------------------------------------------------------------ console widget
 
 function ConsoleCard({ compact = false }) {
+  const st = useBusyStatus()
   const [, force] = useState(0)
   useEffect(() => ConsoleStore.subscribe(() => force(v => v + 1)), [])
   const msgs = ConsoleStore.msgs
@@ -3323,7 +3366,11 @@ function ConsoleCard({ compact = false }) {
     }),
     busy && jsxs('div', { className: 'flex items-center gap-2 text-xs text-(--ui-text-tertiary)', children: [
       jsx('span', { className: 'ao-ring' }),
-      'working…'
+      jsxs('span', { className: 'ao-busy-live', children: [
+        jsx('span', { className: 'text-(--ui-accent)', children: st.phase === 'hermes' ? 'Hermes executing' : 'thinking' }),
+        ' \u00B7 ' + fmtSecs(st.secs),
+        st.phase === 'hermes' && st.secs >= 45 ? ' \u00B7 agent jobs run 1\u20133 min' : ''
+      ] })
     ] }),
     jsxs('div', { className: 'flex items-center gap-2', children: [
       jsx('span', { className: 'ao-mini-orb', 'data-busy': busy || listening ? '1' : '0', 'aria-hidden': 'true' }),
@@ -4927,7 +4974,10 @@ function NeuralCore({ onOpenSpotlight }) {
             onClick: () => { haptic('tap'); onOpenSpotlight() },
             title: 'Click to open command runner (Ctrl+J)',
             children: jsx(Orb3D, { size: 200, onClick: () => { haptic('tap'); onOpenSpotlight() }, ariaLabel: ORB_LABELS[state] || 'Neural core' })
-          })
+          }),
+          // live conversation captions: your words above, JARVIS's reply +
+          // the ticking busy status below the orb
+          jsx(OrbCaptions, {})
         ]
       })
     ]
