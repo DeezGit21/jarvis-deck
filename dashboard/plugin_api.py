@@ -1139,8 +1139,11 @@ def _openrouter_complete(messages: list, timeout: int = 40) -> str:
     return (data.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
 
 
-@router.post("/brief/generate")
-def brief_generate():
+def _brief_generate_text() -> str:
+    """Generate today's brief (one direct completion over pre-gathered context, ~5s).
+    Raises HTTPException on failure; shared by the /brief/generate endpoint and
+    the /command special-case so dock/spotlight/voice brief commands skip the
+    60-120s agent turn."""
     CACHE.mkdir(parents=True, exist_ok=True)
     prompt = BRIEF_PROMPT.format(context=_brief_context(), persona=_PERSONA)
     prompt_file = CACHE / "brief-prompt.txt"
@@ -1156,7 +1159,28 @@ def brief_generate():
         raise HTTPException(status_code=502, detail="brief generation returned empty output")
     path = CACHE / f"brief-{_local_date()}.md"
     path.write_text(brief, encoding="utf-8")
-    return {"brief": brief, "date": _local_date(), "prompt_file": str(prompt_file)}
+    _DASH_CTX["t"] = 0.0  # brief regeneration forces a fresh gather next time
+    return brief
+
+
+_BRIEF_CMD_RE = re.compile(
+    r"\b(generate|make|compile|write|build|run|prepare|draft|do)\b.{0,40}\b(daily )?brief\b"
+    r"|\b(daily )?brief\b.{0,40}\b(generate|make|compile|write|build|run|prepare|draft)\b", re.I)
+
+
+def _brief_cmd(query: str) -> dict | None:
+    """'Generate my daily brief' / 'run the daily brief' — the ~5s brief
+    pipeline, never the full agent turn. Returns a /command reply dict or None."""
+    if not _BRIEF_CMD_RE.search(query):
+        return None
+    brief = _brief_generate_text()
+    return {"ok": True, "reply": brief, "date": _local_date(), "fastpath": "brief"}
+
+
+@router.post("/brief/generate")
+def brief_generate():
+    brief = _brief_generate_text()
+    return {"brief": brief, "date": _local_date(), "prompt_file": str(CACHE / "brief-prompt.txt")}
 
 
 @router.post("/brief/save")
@@ -1331,6 +1355,9 @@ def command(body: dict = Body(...)):
         return dash
     if isinstance(dash, str):
         query = dash  # escalation transcript prefix — agent keeps chat continuity
+    brief_cmd = _brief_cmd(query)  # 'Generate my daily brief' — ~5s pipeline, not the agent
+    if brief_cmd:
+        return brief_cmd
     query = _memory_block(query)
     sid = _deck_session_id()
     argv = ["hermes", "chat", "-Q", "--query-file", "-"]
