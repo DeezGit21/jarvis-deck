@@ -1041,6 +1041,84 @@ def _brief_context() -> str:
     return "\n\n".join(parts)
 
 
+# ---- shared dashboard fast-path (sub-10s answers over pre-gathered context) ----
+
+_DASH_CTX: dict = {"t": 0.0, "text": ""}
+_DASH_CTX_TTL = 30.0  # brief regeneration forces a fresh gather; chat reuses
+
+
+def _dash_context(force: bool = False) -> str:
+    now = time.time()
+    if not force and _DASH_CTX["text"] and now - _DASH_CTX["t"] < _DASH_CTX_TTL:
+        return _DASH_CTX["text"]
+    text = _brief_context()
+    _DASH_CTX["t"] = time.time()
+    _DASH_CTX["text"] = text
+    return text
+
+
+_DASH_QUESTION_RE = re.compile(
+    r"^\s*(what|what's|whats|where|when|which|who|whose|how|is|are|was|were|do we|did|did i|any|anyone|"
+    r"show|list|give me|tell me|summar|remind|status|can|could)\b", re.I)
+_DASH_TOPIC_RE = re.compile(
+    r"\b(status|service|services|down|lead|leads|job|jobs|revenue|bookings?|pipeline|quote|quotes|"
+    r"task|tasks|todo|todos|brief|goal|goals|money|stripe|webull|position|positions|advisor|remediation|"
+    r"metrics|calendar|inbox|email|mail|telegram|voice|dashboard|top priorities|watch list|today)\b", re.I)
+_DASH_ACTION_RE = re.compile(
+    r"\b(restart|reboot|start|stop|kill|fix|repair|diagnose|deploy|run|execute|send|reply|text|call|"
+    r"email|write|create|add|complete|check off|delete|remove|schedule|book|generate|refresh|sync|"
+    r"update|approve|deny|install|cancel|remember|forget|open|launch)\b", re.I)
+
+
+def _dash_is_data_question(q: str) -> bool:
+    ql = q.lower().strip()
+    if _DASH_ACTION_RE.search(ql):
+        return False
+    return bool(_DASH_QUESTION_RE.match(ql) and _DASH_TOPIC_RE.search(ql))
+
+
+_DASH_RECENT: list = []  # (question, answer) — feeds escalation continuity
+
+
+_DASH_SYSTEM = """You are JARVIS, the assistant on the operations dashboard of {persona}.
+Answer the user's question using ONLY the dashboard data below — cite the actual numbers and names.
+Concise plain text, under 120 words, no markdown headers, no offers to do more.
+If the data below does not contain the answer, or the request needs a REAL ACTION \
+(restart, send, create, run anything), reply with exactly one line: [escalate]
+
+DASHBOARD DATA:
+{context}
+"""
+
+
+def _dash_fastpath(query: str):
+    """Answer dashboard-data questions with one direct completion (~2-6s).
+
+    Returns a dict reply on success, a str escalation-transcript prefix when the
+    answer needs the full agent, or None if the query isn't a data question.
+    """
+    if not _dash_is_data_question(query):
+        return None
+    try:
+        ctx = _dash_context()
+        reply = _openrouter_complete(
+            [{"role": "system", "content": _DASH_SYSTEM.format(context=ctx, persona=_PERSONA)},
+             {"role": "user", "content": query}], timeout=25)
+    except Exception:  # noqa: BLE001 — provider/network hiccup: fall through to the agent
+        return None
+    reply = reply.strip()
+    if not reply or reply.lower().startswith("[escalate"):
+        prefix = ""
+        if _DASH_RECENT:
+            turns = "\n".join(f"Q: {q}\nA: {a}" for q, a in _DASH_RECENT[-4:])
+            prefix = "Earlier in this dashboard chat:\n" + turns + "\n\n"
+        return prefix + query
+    _DASH_RECENT.append((query, reply[:400]))
+    if len(_DASH_RECENT) > 6:
+        _DASH_RECENT.pop(0)
+    return {"ok": True, "reply": reply, "date": _local_date(), "fastpath": "dashboard"}
+
+
 def _openrouter_complete(messages: list, timeout: int = 40) -> str:
     """One direct chat completion (no agent loop, no tools) — the fast path for
     briefs. A full `hermes chat` agent turn takes 60-120s; a single completion
@@ -1248,6 +1326,11 @@ def command(body: dict = Body(...)):
         except OSError:
             pass
         return {"ok": True, "reply": "Fresh conversation, sir — history cleared.", "date": _local_date()}
+    dash = _dash_fastpath(query)
+    if isinstance(dash, dict):
+        return dash
+    if isinstance(dash, str):
+        query = dash  # escalation transcript prefix — agent keeps chat continuity
     query = _memory_block(query)
     sid = _deck_session_id()
     argv = ["hermes", "chat", "-Q", "--query-file", "-"]
@@ -1404,6 +1487,10 @@ def voice_chat(body: dict = Body(...)):
         mem_block = _memory_block("").strip()
         if mem_block:
             system += "\n\n" + mem_block
+        if _dash_is_data_question(query):
+            # spoken status/data questions answer from the live dashboard
+            # snapshot (cached 30s) — never hallucinate numbers it can see
+            system += "\n\nLIVE DASHBOARD DATA (answer from this when it covers the question):\n" + _dash_context()
         messages = ([{"role": "system", "content": system}]
                     + _voice_history()[-16:]
                     + [{"role": "user", "content": query}])
@@ -1618,8 +1705,10 @@ def advisor():
 def advisor_generate():
     """Run the advisor: rank today's top-3 actions, merge into the rec ledger."""
     CACHE.mkdir(parents=True, exist_ok=True)
-    prompt = ADVISOR_PROMPT.format(context=_brief_context(), ledger=_ledger_block(), persona=_PERSONA)
-    reply = _run_hermes_prompt(prompt)
+    prompt = ADVISOR_PROMPT.format(context=_dash_context(), ledger=_ledger_block(), persona=_PERSONA)
+    # direct completion — the advisor ranks data already gathered; a full agent
+    # turn adds 60s+ for zero benefit
+    reply = _openrouter_complete([{"role": "user", "content": prompt}], timeout=40)
     data = _extract_json(reply)
     if not data or not isinstance(data.get("actions"), list) or not data["actions"]:
         raise HTTPException(status_code=502, detail=f"advisor returned unparseable output: {reply[:200]}")
