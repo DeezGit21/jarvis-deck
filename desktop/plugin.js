@@ -2297,7 +2297,7 @@ function CalendarCard() {
     setDelBusy('')
   }
   return jsx(AoCard, {
-    label: 'calendar \u00b7 both accounts',
+    label: 'calendar \u00b7 both accounts \u00b7 ' + new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
     delay: 200,
     right: jsxs(Fragment, {
       children: [
