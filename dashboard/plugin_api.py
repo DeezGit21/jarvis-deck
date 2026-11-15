@@ -1067,7 +1067,7 @@ _DASH_TOPIC_RE = re.compile(
 _DASH_ACTION_RE = re.compile(
     r"\b(restart|reboot|start|stop|kill|fix|repair|diagnose|deploy|run|execute|send|reply|text|call|"
     r"email|write|create|add|complete|check off|delete|remove|schedule|book|generate|refresh|sync|"
-    r"update|approve|deny|install|cancel|remember|forget|open|launch)\b", re.I)
+    r"update|approve|deny|install|cancel|remember|forget)\b", re.I)
 
 
 def _dash_is_data_question(q: str) -> bool:
@@ -1134,9 +1134,24 @@ def _openrouter_complete(messages: list, timeout: int = 40) -> str:
         "https://openrouter.ai/api/v1/chat/completions", data=payload,
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json",
                  "HTTP-Referer": "http://localhost:4527", "X-Title": "Jarvis Deck"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    return (data.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+    # Free-tier rate limits (429) hit bursts of brief/dashboard calls — one
+    # short retry clears the common case instead of surfacing a 502.
+    last_err: Exception | None = None
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            return (data.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt == 0:
+                last_err = e
+                time.sleep(2.5)
+                continue
+            raise RuntimeError(f"OpenRouter completion failed ({e.code})") from None
+        except Exception as e:  # noqa: BLE001 — network/provider errors
+            last_err = e
+            raise
+    raise RuntimeError(f"OpenRouter completion rate-limited: {last_err}")
 
 
 def _brief_generate_text() -> str:
@@ -1168,13 +1183,42 @@ _BRIEF_CMD_RE = re.compile(
     r"|\b(daily )?brief\b.{0,40}\b(generate|make|compile|write|build|run|prepare|draft)\b", re.I)
 
 
+def _brief_speech(brief_md: str) -> str:
+    """Short speakable version of the brief: the top-priorities lines only.
+
+    Fish synthesis time scales with length — a full 600-char brief takes
+    20-35s of silent wait (too long: mobile browsers kill the stalled media
+    request). The top-3 priorities (~250 chars) synthesize in ~6-9s, which
+    survives the phone round-trip.
+    """
+    lines: list[str] = []
+    for ln in brief_md.splitlines():
+        s = ln.strip()
+        if not s or s.startswith(("#", "```")):
+            continue
+        s = re.sub(r"\*\*|__|`", "", s)
+        s = re.sub(r"^\s*[-*\d.)]+\s*", "", s)
+        if s:
+            lines.append(s)
+        if sum(len(x) for x in lines) > 200:
+            break
+    speech = ". ".join(lines).strip()
+    if len(speech) > 240:
+        cut = speech.rfind(". ", 0, 240)
+        speech = speech[: cut + 1 if cut > 120 else 240]
+    if speech and not speech.endswith((".", "!", "?")):
+        speech += "."
+    return speech
+
+
 def _brief_cmd(query: str) -> dict | None:
     """'Generate my daily brief' / 'run the daily brief' — the ~5s brief
     pipeline, never the full agent turn. Returns a /command reply dict or None."""
     if not _BRIEF_CMD_RE.search(query):
         return None
     brief = _brief_generate_text()
-    return {"ok": True, "reply": brief, "date": _local_date(), "fastpath": "brief"}
+    return {"ok": True, "reply": brief, "speech": _brief_speech(brief),
+            "date": _local_date(), "fastpath": "brief"}
 
 
 @router.post("/brief/generate")

@@ -768,7 +768,7 @@ const ConsoleStore = {
       this.add({ role: 'jarvis', text: r.reply })
       this.lastDone = { cmd: query, secs: Math.max(1, Math.round((Date.now() - this.since) / 1000)), at: Date.now() }
       Chimes.play('down')
-      const spoke = Tts.speak(r.reply)
+      const spoke = Tts.speak(r.speech || r.reply)
       if (!spoke) OrbBus.set('idle')
       return true
     } catch (e) {
