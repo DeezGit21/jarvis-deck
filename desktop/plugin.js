@@ -3525,12 +3525,15 @@ function MoneySection() {
   const refresh = () => { qc.invalidateQueries({ queryKey: ['agentos', 'money'] }); q.refetch() }
   return jsxs('div', { className: 'flex flex-col gap-3', children: [
     q.error && jsx('div', { className: 'text-sm text-(--ui-text-secondary)', children: q.error.message }),
-    jsx('div', { className: 'grid grid-cols-1 gap-3', children: [
-      jsx(QuotesCard, {}),
-      jsx(MoneyConnector, { name: 'stripe — balance & payouts', data: d && d.stripe, onRefresh: refresh, refreshing: q.isFetching, delay: 40 }),
-      jsx(MoneyConnector, { name: 'webull — positions', data: d && d.stocks, onRefresh: refresh, refreshing: q.isFetching, delay: 120 }),
-      jsx(MoneyConnector, { name: 'banks (plaid) — balances & transactions', data: d && d.banks, onRefresh: refresh, refreshing: q.isFetching, delay: 200 })
-    ] }),
+    jsx(OrderStack, {
+      storageKey: 'agentos-money-order',
+      items: [
+        { id: 'quotes', node: jsx(QuotesCard, {}) },
+        { id: 'stripe', node: jsx(MoneyConnector, { name: 'stripe — balance & payouts', data: d && d.stripe, onRefresh: refresh, refreshing: q.isFetching, delay: 40 }) },
+        { id: 'webull', node: jsx(MoneyConnector, { name: 'webull — positions', data: d && d.stocks, onRefresh: refresh, refreshing: q.isFetching, delay: 120 }) },
+        { id: 'banks', node: jsx(MoneyConnector, { name: 'banks (plaid) — balances & transactions', data: d && d.banks, onRefresh: refresh, refreshing: q.isFetching, delay: 200 }) }
+      ]
+    }),
     jsx('div', {
       className: 'ao-in text-xs text-(--ui-text-quaternary)',
       style: { animationDelay: '280ms' },
@@ -5562,7 +5565,8 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
   }, [])
   const dragId = useRef(null)
   const [dragging, setDragging] = useState(null)
-  const [overId, setOverId] = useState(null)
+  // last card the dragged card swapped with this gesture — live-reorder throttle
+  const liveSwap = useRef(null)
   // Grab-handle drag is ALWAYS on: pressing ⠿ arms only that card as draggable
   // for the life of the gesture, so row clicks and text selection keep working.
   const [armed, setArmed] = useState(null)
@@ -5644,18 +5648,17 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
       const w = WIDGETS[id]
       const size = (layout.sizes || {})[id] || { w: w.span, h: w.rows }
       const isDragging = dragging === id
-      const isOver = overId === id && dragId.current && dragId.current !== id
       return jsxs('div', {
         key: id,
         'data-widget': id,
         className: cn('ao-grid-flip relative'),
         style: { gridColumn: 'span ' + (narrow ? Math.min(size.w, 4) : size.w), gridRow: 'span ' + size.h },
         'data-dragging': isDragging ? '1' : undefined,
-        'data-over': isOver ? '1' : undefined,
         draggable: (customize || armed === id) ? 'true' : undefined,
         onDragStart: e => {
           if (!customize && armedRef.current !== id) return
           dragId.current = id
+          liveSwap.current = null
           setDragging(id)
           try { e.dataTransfer.setData('text/plain', id) } catch { /* ignore */ }
           e.dataTransfer.effectAllowed = 'move'
@@ -5663,22 +5666,25 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
         onDragOver: e => {
           if (!dragId.current) return
           e.preventDefault()
-          if (dragId.current !== id) setOverId(id)
+          // LIVE reorder: the layout under the cursor is the real layout —
+          // cards reflow as you drag, no guessing where the drop will land.
+          if (dragId.current !== id && liveSwap.current !== id) {
+            liveSwap.current = id
+            reorder(dragId.current, id)
+          }
         },
-        onDragLeave: () => { if (overId === id) setOverId(null) },
         onDrop: e => {
           if (!dragId.current) return
           e.preventDefault()
-          reorder(dragId.current, id)
           dragId.current = null
+          liveSwap.current = null
           setDragging(null)
-          setOverId(null)
           disarm()
         },
         onDragEnd: () => {
           dragId.current = null
+          liveSwap.current = null
           setDragging(null)
-          setOverId(null)
           disarm()
         },
         children: [
@@ -5723,6 +5729,83 @@ function WidgetGrid({ customize, dockPinned, onOpenSpotlight, onOpenServices }) 
     }, id))
     ] })
   ] })
+}
+
+// --------------------------------------- live-reorder card stack (Money/Goals tabs)
+// Same grab-handle drag model as the overview grid (⠿ arms ONE card per gesture,
+// so clicks/text selection inside cards keep working) — but cards reflow WHILE
+// you drag, so the layout you see is the layout you get. Order persists per-tab.
+function OrderStack({ storageKey, items, gapClass }) {
+  const ids = items.map(i => i.id)
+  const byId = {}
+  for (const it of items) byId[it.id] = it
+  const [order, setOrder] = useState(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(storageKey) || 'null')
+      if (Array.isArray(raw) && raw.length) {
+        const o = raw.filter(id => ids.includes(id))
+        for (const id of ids) if (!o.includes(id)) o.push(id)
+        if (o.length === ids.length) return o
+      }
+    } catch { /* ignore */ }
+    return ids
+  })
+  const orderRef = useRef(order)
+  orderRef.current = order
+  const dragId = useRef(null)
+  const liveSwap = useRef(null)
+  const [dragging, setDragging] = useState(null)
+  const [armed, setArmed] = useState(null)
+  const armedRef = useRef(null)
+  armedRef.current = armed
+  const disarm = () => setArmed(null)
+  useEffect(() => {
+    const off = () => setArmed(null)
+    window.addEventListener('pointerup', off)
+    window.addEventListener('pointercancel', off)
+    return () => { window.removeEventListener('pointerup', off); window.removeEventListener('pointercancel', off) }
+  }, [])
+  function swap(fromId, toId) {
+    if (!fromId || fromId === toId) return
+    const next = orderRef.current.filter(x => x !== fromId)
+    next.splice(next.indexOf(toId), 0, fromId)
+    setOrder(next)
+    try { localStorage.setItem(storageKey, JSON.stringify(next)) } catch { /* ignore */ }
+  }
+  return jsx('div', { className: gapClass || 'flex flex-col gap-3', children:
+    order.map(id => jsxs('div', {
+      key: id,
+      className: 'group relative',
+      draggable: armed === id ? 'true' : undefined,
+      onDragStart: e => {
+        if (armedRef.current !== id) return
+        dragId.current = id
+        liveSwap.current = null
+        setDragging(id)
+        try { e.dataTransfer.setData('text/plain', id) } catch { /* ignore */ }
+        e.dataTransfer.effectAllowed = 'move'
+      },
+      onDragOver: e => {
+        if (!dragId.current || dragId.current === id) return
+        e.preventDefault()
+        if (liveSwap.current !== id) { liveSwap.current = id; swap(dragId.current, id) }
+      },
+      onDrop: e => e.preventDefault(),
+      onDragEnd: () => { dragId.current = null; liveSwap.current = null; setDragging(null); setArmed(null) },
+      children: [
+        jsx('span', {
+          className: 'ao-wbtn absolute left-1/2 top-1 z-30 -translate-x-1/2 opacity-0 transition-opacity group-hover:opacity-100',
+          title: 'Drag to reorder — cards move as you drag',
+          'aria-hidden': 'true',
+          style: { cursor: 'grab', fontSize: '.8rem' },
+          onPointerDown: () => setArmed(id),
+          onPointerUp: disarm,
+          children: '⠿'
+        }),
+        byId[id].node
+      ]
+    }, id))
+  })
 }
 
 // ------------------------------------------------------------ full-viewport modes (Alt+1..4)
@@ -6234,11 +6317,16 @@ function AgentosPage() {
           jsx(WidgetBoundary, { children: jsx(VisionCard, {}) })
         }),
         tab === 'money' && jsx(MoneySection, {}),
-        tab === 'goals' && jsxs('div', { className: 'mx-auto w-full max-w-4xl flex flex-col gap-3', children: [
-          jsx(WidgetBoundary, { children: jsx(GoalsCard, {}) }),
-          jsx(WidgetBoundary, { children: jsx(TodosCard, {}) }),
-          jsx(WidgetBoundary, { children: jsx(ExportCard, {}) })
-        ] }),
+        tab === 'goals' && jsx('div', { className: 'mx-auto w-full max-w-4xl', children:
+          jsx(OrderStack, {
+            storageKey: 'agentos-goals-order',
+            items: [
+              { id: 'goals', node: jsx(WidgetBoundary, { children: jsx(GoalsCard, {}) }) },
+              { id: 'todos', node: jsx(WidgetBoundary, { children: jsx(TodosCard, {}) }) },
+              { id: 'export', node: jsx(WidgetBoundary, { children: jsx(ExportCard, {}) }) }
+            ]
+          })
+        }),
         tab === 'settings' && jsx(WidgetBoundary, { children: jsx(SettingsSection, {}) })
       ] }),
       jsx(Spotlight, { open: spotOpen, onClose: () => setSpotOpen(false) }),
