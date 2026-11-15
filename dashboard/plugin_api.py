@@ -1041,6 +1041,23 @@ def _brief_context() -> str:
     return "\n\n".join(parts)
 
 
+def _openrouter_complete(messages: list, timeout: int = 40) -> str:
+    """One direct chat completion (no agent loop, no tools) — the fast path for
+    briefs. A full `hermes chat` agent turn takes 60-120s; a single completion
+    over pre-gathered context answers in a few seconds."""
+    key = _read_env().get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY missing — add it in Settings -> API keys")
+    payload = json.dumps({"model": _VOICE_MODEL, "messages": messages}).encode("utf-8")
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions", data=payload,
+        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json",
+                 "HTTP-Referer": "http://localhost:4527", "X-Title": "Jarvis Deck"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return (data.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+
+
 @router.post("/brief/generate")
 def brief_generate():
     CACHE.mkdir(parents=True, exist_ok=True)
@@ -1048,19 +1065,12 @@ def brief_generate():
     prompt_file = CACHE / "brief-prompt.txt"
     prompt_file.write_text(prompt, encoding="utf-8")
     try:
-        p = subprocess.run(
-            ["hermes", "chat", "-Q", "--query-file", "-"],
-            input=prompt, capture_output=True, text=True, timeout=480,
-            creationflags=_NO_WINDOW,
-        )
-        rc, out, err = p.returncode, p.stdout, p.stderr
-    except subprocess.TimeoutExpired:
-        rc, out, err = 124, "", "brief generation timed out after 480s"
-    if rc != 0:
-        raise HTTPException(status_code=502, detail=f"brief generation failed: {err.strip()[:300]}")
-    # hermes chat -Q prints the answer, then a trailing session_id line — drop it.
-    lines = [ln for ln in out.strip().splitlines() if not ln.startswith("session_id:")]
-    brief = "\n".join(lines).strip()
+        brief = _openrouter_complete(
+            [{"role": "user", "content": prompt}], timeout=40)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:  # noqa: BLE001 — urllib/HTTP errors from the provider
+        raise HTTPException(status_code=502, detail=f"brief generation failed: {e}")
     if not brief:
         raise HTTPException(status_code=502, detail="brief generation returned empty output")
     path = CACHE / f"brief-{_local_date()}.md"
