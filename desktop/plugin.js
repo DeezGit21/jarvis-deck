@@ -240,7 +240,7 @@ html.ao-companion, html.ao-companion body, html.ao-companion #root { background:
 
 /* --- fixed-height grid cells: cards fill their cell, content scrolls --- */
 .ao-grid12 > div { min-width: 0; min-height: 0; }
-.ao-grid12 > div[data-dragging] { z-index: 60; opacity: .92; box-shadow: 0 18px 50px rgba(0,0,0,.55); cursor: grabbing; }
+div[data-dragging] { z-index: 60; opacity: .92; box-shadow: 0 18px 50px rgba(0,0,0,.55); cursor: grabbing; }
 body.ao-dragging-any { user-select: none; -webkit-user-select: none; cursor: grabbing; }
 body.ao-dragging-any * { cursor: grabbing !important; }
 .ao-grid12 .ao-card { height: 100%; display: flex; flex-direction: column; }
@@ -5914,6 +5914,8 @@ function OrderStack({ storageKey, items, gapClass }) {
   const dragId = useRef(null)
   const liveSwap = useRef(null)
   const [dragging, setDragging] = useState(null)
+  // homescreen-style press-drag state (mouse/pen) — mirrors WidgetGrid.startPtrDrag
+  const ptrDrag = useRef(null)
   const [armed, setArmed] = useState(null)
   const armedRef = useRef(null)
   armedRef.current = armed
@@ -5931,11 +5933,113 @@ function OrderStack({ storageKey, items, gapClass }) {
     setOrder(next)
     try { localStorage.setItem(storageKey, JSON.stringify(next)) } catch { /* ignore */ }
   }
+  // Homescreen-style drag for stacked-card tabs (Money/Goals): press anywhere
+  // on a card (except interactive controls) and move — vertical stack, so the
+  // cursor passing a card's midpoint inserts there. Reads orderRef so the
+  // long-lived window listeners never compute from a stale order.
+  function startPtrDrag(e, id, stackEl) {
+    if (e.button !== 0 || ptrDrag.current) return
+    const t = e.target
+    if (t.closest && t.closest('button, input, textarea, select, a, iframe, canvas, [contenteditable="true"], .ao-wbtn')) return
+    const st = { id, stackEl, sx: e.clientX, sy: e.clientY, active: false, tx: 0, ty: 0, bx: 0, by: 0, el: null, touchTimer: null }
+    ptrDrag.current = st
+    const insertAt = (fromId, idx) => {
+      const rest = orderRef.current.filter(x => x !== fromId)
+      const next = rest.slice()
+      next.splice(Math.max(0, Math.min(rest.length, idx)), 0, fromId)
+      if (next.join('\u0000') === orderRef.current.join('\u0000')) return
+      setOrder(next)
+      try { localStorage.setItem(storageKey, JSON.stringify(next)) } catch { /* ignore */ }
+    }
+    const begin = () => {
+      if (ptrDrag.current !== st || st.active) return
+      st.el = stackEl.querySelector('[data-stack-item="' + id + '"]')
+      if (!st.el) { cleanup(); return }
+      const r = st.el.getBoundingClientRect()
+      st.bx = r.left; st.by = r.top
+      st.active = true
+      dragId.current = id
+      liveSwap.current = null
+      setDragging(id)
+      st.el.style.pointerEvents = 'none'
+      document.body.classList.add('ao-dragging-any')
+    }
+    const apply = (x, y) => {
+      st.tx = x - st.bx; st.ty = y - st.by
+      st.el.style.transform = 'translate(' + st.tx.toFixed(1) + 'px,' + st.ty.toFixed(1) + 'px) scale(1.01)'
+    }
+    const rebase = (x, y) => {
+      requestAnimationFrame(() => {
+        if (ptrDrag.current !== st || !st.active || !st.el) return
+        const r = st.el.getBoundingClientRect()
+        st.bx = r.left - st.tx; st.by = r.top - st.ty
+        apply(x, y)
+      })
+    }
+    const hit = (x, y) => {
+      const under = document.elementFromPoint(x, y)
+      const target = under && under.closest ? under.closest('[data-stack-item]') : null
+      if (target && target.dataset.stackItem !== st.id) {
+        const r0 = target.getBoundingClientRect()
+        const token = target.dataset.stackItem + (y > r0.top + r0.height / 2 ? ':b' : ':a')
+        if (liveSwap.current !== token) {
+          liveSwap.current = token
+          let idx = Array.prototype.indexOf.call(stackEl.children, target)
+          if (y > r0.top + r0.height / 2) idx++ // below the midpoint = insert after
+          insertAt(st.id, idx)
+          rebase(x, y)
+        }
+        return
+      }
+      let idx = 0
+      for (const c of stackEl.children) {
+        if (!c.dataset || !c.dataset.stackItem || c.dataset.stackItem === st.id) continue
+        const r = c.getBoundingClientRect()
+        if (y > r.top + r.height / 2) idx++
+      }
+      const token = 'gap' + idx
+      if (liveSwap.current !== token) { liveSwap.current = token; insertAt(st.id, idx); rebase(x, y) }
+    }
+    const onMove = ev => {
+      if (ptrDrag.current !== st) return
+      if (!st.active) {
+        const dist = Math.hypot(ev.clientX - st.sx, ev.clientY - st.sy)
+        if (st.touchTimer) { if (dist > 10) cleanup(); return }
+        if (dist > 6) begin()
+        else return
+      }
+      apply(ev.clientX, ev.clientY)
+      hit(ev.clientX, ev.clientY)
+    }
+    const onUp = () => { if (st.active) haptic('tap'); cleanup() }
+    const cleanup = () => {
+      if (st.touchTimer) { clearTimeout(st.touchTimer); st.touchTimer = null }
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      if (st.active && st.el) { st.el.style.transform = ''; st.el.style.pointerEvents = '' }
+      document.body.classList.remove('ao-dragging-any')
+      if (st.active) { dragId.current = null; liveSwap.current = null; setDragging(null); setArmed(null) }
+      if (ptrDrag.current === st) ptrDrag.current = null
+    }
+    if (e.pointerType === 'mouse' || e.pointerType === 'pen') {
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+    } else {
+      st.touchTimer = setTimeout(() => { st.touchTimer = null; begin() }, 350)
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onUp)
+    }
+  }
   return jsx('div', { className: gapClass || 'flex flex-col gap-3', children:
     order.map(id => jsxs('div', {
       key: id,
       className: 'group relative',
+      'data-stack-item': id,
+      'data-dragging': dragging === id ? '1' : undefined,
       draggable: armed === id ? 'true' : undefined,
+      onPointerDown: e => startPtrDrag(e, id, e.currentTarget.parentElement),
       onDragStart: e => {
         if (armedRef.current !== id) return
         dragId.current = id
