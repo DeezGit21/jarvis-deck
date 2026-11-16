@@ -46,8 +46,12 @@ escalate:                           # phone-call escalation via Twilio (optional
   voice: Polly.Matthew              # Twilio TTS voice for the call
                                     # creds: TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN (Settings -> API keys)
 
-model_switcher:                     # console dropdown: models `hermes chat -m` accepts
+model_switcher:                     # Settings -> Appearance: models `hermes chat -m` accepts
   models:
     - google/gemini-2.5-flash
-    - google/gemini-2.5-pro
+    - z-ai/glm-5.3-flash
+    - nvidia/nemotron-3-ultra-550b-a55b:free
+    - google/gemini-4-argon
+    - anthropic/claude-sonnet-5.5
+    - anthropic/claude-fable-5.2
 

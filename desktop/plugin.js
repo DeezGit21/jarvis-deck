@@ -3299,22 +3299,7 @@ function ConsoleCard({ compact = false }) {
   const busy = ConsoleStore.busy
   const [input, setInput] = useState('')
   const [listening, setListening] = useState(false)
-  // Agent-model switcher: what `hermes chat` runs for console agent turns
-  // (GET/POST /model; empty = the profile default). Voice streaming keeps its
-  // own fast model — this switcher is about the AGENT, not the voice chat.
-  const modelQ = useQuery({ queryKey: ['agentos', 'model'], queryFn: () => REST('/model') })
-  const [modelBusy, setModelBusy] = useState(false)
-  async function setModel(m) {
-    setModelBusy(true)
-    try {
-      await REST('/model', { method: 'POST', body: { model: m } })
-      await modelQ.refetch()
-      ConsoleStore.add({ role: 'jarvis', text: m ? 'Agent model set to ' + m + ' — next command runs on it.' : 'Agent model reset to the profile default.' })
-    } catch (e) {
-      ConsoleStore.add({ role: 'jarvis', text: 'Model switch failed: ' + (e && e.message ? e.message : 'unknown error') })
-    }
-    setModelBusy(false)
-  }
+
   const [micOk] = useState(() => typeof window !== 'undefined' &&
     !!(window.SpeechRecognition || window.webkitSpeechRecognition))
   const recRef = useRef(null)
@@ -3522,22 +3507,7 @@ function ConsoleCard({ compact = false }) {
         className: 'shrink-0 rounded-md border border-(--ui-stroke-secondary) px-3 py-2 text-xs uppercase tracking-wider text-(--ui-text-secondary) transition-colors enabled:hover:border-(--ui-accent) enabled:hover:text-(--ui-accent) disabled:opacity-40',
         children: busy ? '…' : 'Run'
       }),
-      // agent-model switcher (console agent turns run hermes chat -m <model>)
-      !compact && modelQ.data && jsx('select', {
-        value: modelQ.data.model || '',
-        onChange: e => setModel(e.target.value),
-        disabled: modelBusy,
-        'aria-label': 'Agent model',
-        title: 'Agent model — the model Jarvis runs for console agent turns (voice chat keeps its own fast model)',
-        className: 'max-w-[11rem] shrink-0 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) px-1.5 py-2 font-mono text-xs text-(--ui-text-secondary) outline-none transition-colors hover:border-(--ui-accent) focus:border-(--ui-accent)',
-        children: [
-          jsx('option', { value: '', children: 'model: profile default' }),
-          modelQ.data.model && !(modelQ.data.models || []).includes(modelQ.data.model)
-            ? jsx('option', { value: modelQ.data.model, children: modelQ.data.model })
-            : null,
-          ...(modelQ.data.models || []).map(m => jsx('option', { value: m, children: m }, m))
-        ]
-      }),
+
       // new conversation — drops the rolling backend session so Jarvis forgets
       // this chat's turns (typed AND voice share the same session)
       jsx('button', {
@@ -5383,6 +5353,20 @@ function NotesCard() {
     try { await REST('/notes', { method: 'DELETE', body: { id } }); setErr(''); await q.refetch() } catch (e) { setErr((e && e.message) || 'delete failed') }
     setBusy(false)
   }
+  const [editId, setEditId] = useState(null)
+  const [editDraft, setEditDraft] = useState('')
+  async function saveEdit() {
+    const t = editDraft.trim()
+    if (!t || !editId || busy) return
+    setBusy(true)
+    try {
+      await REST('/notes', { method: 'PUT', body: { id: editId, text: t } })
+      setEditId(null)
+      setErr('')
+      await q.refetch()
+    } catch (e) { setErr((e && e.message) || 'edit failed') }
+    setBusy(false)
+  }
 
   return jsx(AoCard, {
     label: 'notes · quick jots · synced to google tasks',
@@ -5412,15 +5396,36 @@ function NotesCard() {
       ] }),
       err && jsx('div', { className: 'text-xs text-[#f5495b]', children: err }),
       jsx('div', { className: 'flex-1 space-y-1.5 overflow-y-auto', children: notes.length ? notes.slice(0, 30).map((n, i) =>
-        jsxs('div', { className: 'group flex items-start gap-2 min-w-0 text-xs ao-in' + (n.done ? ' opacity-45' : ''), style: { animationDelay: i * 30 + 'ms' }, children: [
+        editId === n.id ? jsxs('div', { className: 'flex items-start gap-2 min-w-0 text-xs ao-in', children: [
+          jsx('span', { className: 'shrink-0 pt-0.5 text-(--ui-accent)', children: '\u270E' }),
+          jsx('textarea', {
+            value: editDraft, autoFocus: true, rows: 2,
+            onChange: e => setEditDraft(e.target.value),
+            onKeyDown: e => {
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit() }
+              if (e.key === 'Escape') setEditId(null)
+            },
+            className: 'min-w-0 flex-1 resize-none rounded-md border border-(--ui-border) bg-transparent px-2 py-1 text-xs text-(--ui-text-primary) outline-none focus:border-(--ui-accent)',
+            spellCheck: false
+          }),
+          jsx('button', { type: 'button', className: 'ao-btn shrink-0', onClick: saveEdit, disabled: busy, children: 'Save' }),
+          jsx('button', { type: 'button', className: 'ao-wbtn shrink-0', onClick: () => setEditId(null), title: 'Cancel edit', children: '\u2715' })
+        ] }, n.id) : jsxs('div', { className: 'group flex items-start gap-2 min-w-0 text-xs ao-in' + (n.done ? ' opacity-45' : ''), style: { animationDelay: i * 30 + 'ms' }, children: [
           jsx('span', { className: 'shrink-0 pt-0.5 text-(--ui-accent)', children: n.done ? '\u2713' : '\u25c6' }),
           jsx('span', { className: 'min-w-0 flex-1 whitespace-pre-wrap break-words text-(--ui-text-secondary)', children: n.text }),
           jsx('span', { className: 'shrink-0 pt-0.5 text-[11px] text-(--ui-text-quaternary)', title: new Date((n.ts || 0) * 1000).toLocaleString(), children: fmtAgo((n.ts || 0) * 1000) }),
           jsx('button', {
             type: 'button',
+            onClick: () => { setEditId(n.id); setEditDraft(n.text) },
+            title: 'Edit this note (syncs the edit to Google Tasks)',
+            className: 'shrink-0 pt-0.5 text-[12px] text-(--ui-text-quaternary) opacity-60 hover:text-(--ui-accent)',
+            children: '\u270E'
+          }),
+          jsx('button', {
+            type: 'button',
             onClick: () => drop(n.id),
             title: 'Delete this note (removes it from Google Tasks too)',
-            className: 'shrink-0 pt-0.5 text-[12px] text-(--ui-text-quaternary) opacity-0 transition-opacity group-hover:opacity-100 hover:text-[#f5495b]',
+            className: 'shrink-0 pt-0.5 text-[12px] text-(--ui-text-quaternary) opacity-60 hover:text-[#f5495b]',
             children: '\u2715'
           })
         ] }, n.id)
@@ -5490,6 +5495,21 @@ function SettingsSection() {
   const [voice, setVoice] = useState('')
   const [voiceSaved, setVoiceSaved] = useState('')
   useEffect(() => { if (d && d.settings) { setVoice(d.settings.tts_voice || ''); setVoiceSaved(d.settings.tts_voice || '') } }, [d])
+  // Agent-model switcher (moved here from the console): what `hermes chat`
+  // runs for console agent turns — GET/POST /model; empty = profile default.
+  // Voice streaming keeps its own fast model.
+  const modelQ = useQuery({ queryKey: ['agentos', 'model'], queryFn: () => REST('/model') })
+  const [modelBusy, setModelBusy] = useState(false)
+  async function setModel(m) {
+    setModelBusy(true)
+    try {
+      await REST('/model', { method: 'POST', body: { model: m } })
+      await modelQ.refetch()
+    } catch (e) {
+      setKeyMsg('agent model: ' + String(e && e.message || e).slice(0, 120))
+    }
+    setModelBusy(false)
+  }
   const [keyDrafts, setKeyDrafts] = useState({})
   const [keyBusy, setKeyBusy] = useState(null)
   const [keyMsg, setKeyMsg] = useState(null)
@@ -5566,7 +5586,17 @@ function SettingsSection() {
   const mcps = (cq.data && cq.data.mcps) || []
   const pct = v => Math.round(v * 100) + '%'
 
-  return jsxs('div', { className: 'mx-auto flex w-full max-w-4xl flex-col gap-3', children: [
+  return jsxs('div', { className: 'mx-auto flex w-full max-w-[2100px] flex-col gap-3', children: [
+    // wide 3-column layout (D's call): col1 = appearance + agent model,
+    // col2 = dashboard cards + api keys, col3 = tools & integrations —
+    // connectors sit next to api keys, using the horizontal space.
+    // max-w-[2100px] (was 7xl/1280px): on wide windows the old cap stranded
+    // ~1200px of dead margin on both sides; ~700px columns let the inner
+    // grids (appearance sliders 2-col, connector 2-col) actually engage.
+    // explicit grid-cols-1: an implicit auto track below lg sizes to the widest
+    // row's min-content (nowrap names) and overflows the card at narrow widths
+    jsxs('div', { className: 'grid grid-cols-1 items-start gap-3 lg:grid-cols-2 xl:grid-cols-3', children: [
+    jsxs('div', { className: 'flex flex-col gap-3', children: [
     // ---- appearance
     jsx(AoCard, {
       label: 'appearance & sound', delay: 40,
@@ -5650,6 +5680,32 @@ function SettingsSection() {
         ] })
       ] })
     }),
+    // ---- agent model (own card — was buried as a sub-row in appearance, hard to spot)
+    jsx(AoCard, {
+      label: 'agent model', delay: 55,
+      right: jsx('span', { className: 'font-mono text-[0.75rem] text-(--ui-accent)', children:
+        (modelQ.data && modelQ.data.model) || 'profile default' }),
+      children: jsxs('div', { className: 'space-y-2', children: [
+        jsx('select', {
+          className: 'ao-select w-full', value: (modelQ.data && modelQ.data.model) || '',
+          onChange: e => setModel(e.target.value),
+          disabled: modelBusy || !modelQ.data,
+          'aria-label': 'Agent model',
+          title: 'The model Jarvis runs for console agent turns — live, no restart (voice chat keeps its own fast model)',
+          children: [
+            jsx('option', { value: '', children: 'profile default' }),
+            modelQ.data && modelQ.data.model && !(modelQ.data.models || []).includes(modelQ.data.model)
+              ? jsx('option', { value: modelQ.data.model, children: modelQ.data.model })
+              : null,
+            ...((modelQ.data && modelQ.data.models) || []).map(m => jsx('option', { value: m, children: m }, m))
+          ]
+        }),
+        jsx('div', { className: 'text-[0.75rem] text-(--ui-text-tertiary)', children:
+          'The model Jarvis runs for console agent turns — applies to the next console command, live, no restart. Voice chat keeps its own fast model.' })
+      ] })
+    }),
+    ] }),
+    jsxs('div', { className: 'flex flex-col gap-3', children: [
     // ---- dashboard cards (show/hide, mirrors the grid's hide + restore)
     jsx(AoCard, {
       label: 'dashboard cards', delay: 70,
@@ -5743,21 +5799,27 @@ function SettingsSection() {
         keyMsg && jsx('div', { className: 'font-mono text-[0.8rem] text-(--ui-accent)', children: keyMsg })
       ] })
     }),
+    ] }),
+    jsxs('div', { className: 'flex flex-col gap-3', children: [
     // ---- integrations
     jsx(AoCard, {
       label: 'tools & integrations', delay: 160,
+      // @container: the 2-col connector split keys off the CARD's width, not the
+      // viewport — at the xl 3-col settings layout the card is only ~400px wide
+      // and a viewport-based sm: split crushed names to ~6 chars (unreadable).
+      className: '@container',
       right: jsx('button', {
         type: 'button', className: 'text-xs text-(--ui-accent)',
         onClick: () => cq.refetch(), children: 'Refresh'
       }),
-      children: jsxs('div', { className: 'grid gap-4 sm:grid-cols-2', children: [
+      children: jsxs('div', { className: 'grid grid-cols-1 gap-4 @min-[560px]:grid-cols-2', children: [
         jsxs('div', { children: [
           jsx('div', { className: 'ao-label mb-2', children: 'connector accounts' }),
           jsx('div', { className: 'space-y-1', children: hosted.map(c =>
-            jsxs('div', { className: 'flex items-center gap-2 rounded-md px-1 py-1 text-sm', children: [
+            jsxs('div', { className: 'flex items-center gap-2 rounded-md px-1 py-1 text-xs font-mono', children: [
               jsx(Led, { up: c.connected ? true : false }),
               jsx(BrandLogo, { name: c.name }),
-              jsx('span', { className: 'min-w-0 flex-1 truncate text-(--ui-text-secondary)', children: c.name }),
+              jsx('span', { className: 'min-w-0 flex-1 truncate text-(--ui-text-primary)', children: c.name }),
               c.connected && c.url && jsx('button', {
                 type: 'button', className: 'ao-btn', onClick: () => openExternal(c.url), children: 'Open'
               }),
@@ -5772,10 +5834,10 @@ function SettingsSection() {
         jsxs('div', { children: [
           jsx('div', { className: 'ao-label mb-2', children: 'local mcp servers' }),
           jsx('div', { className: 'space-y-1', children: mcps.map(m =>
-            jsxs('div', { className: 'flex items-center gap-2 rounded-md px-1 py-1 text-sm', children: [
+            jsxs('div', { className: 'flex items-center gap-2 rounded-md px-1 py-1 text-xs font-mono', children: [
               jsx(Led, { up: m.enabled ? true : false }),
               jsx(BrandLogo, { name: m.name }),
-              jsx('span', { className: 'min-w-0 flex-1 truncate text-(--ui-text-secondary)', children: m.name }),
+              jsx('span', { className: 'min-w-0 flex-1 truncate text-(--ui-text-primary)', children: m.name }),
               m.url && jsx('button', {
                 type: 'button', className: 'ao-btn', onClick: () => openExternal(m.url), children: 'Open'
               })
@@ -5785,6 +5847,8 @@ function SettingsSection() {
         ] })
       ] })
     })
+    ] })
+    ] })
   ] })
 }
 

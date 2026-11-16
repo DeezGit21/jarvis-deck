@@ -34,7 +34,7 @@ style setup, but any backend that serves the same simple JSON routes works.
 | Memory galaxy | Star cloud of kanban tasks, cron jobs and monitored services — clustered by status, drag to pan, ctrl+wheel to zoom, click a star for actions (done / break down / delegate / run now / restart / diagnose) |
 | Realtime voice | Hold **SPACE** (or the mic button), talk, release — the reply streams back **sentence-by-sentence** with per-sentence streaming TTS, ~1s to first sound. Instant spoken acks ("Right away, sir") fire while the reply is still generating. Barge-in with Esc. TTS providers: edge-tts (free, default), Gemini TTS, Fish Audio voice clones |
 | Console | Type or talk to your agent; `/`-commands (`/brief` `/top3` `/diag` `/tasks` `/restart` `/remember` …), rolling conversation memory, dashboard data questions answered from a live snapshot in 1–3s |
-| Daily brief / Advisor | Generated operational brief (editable in place), top-3 actions, accountability rows with FIX — the item text becomes the command |
+| Daily brief / Advisor | Generated operational brief (editable in place), top-3 actions, accountability rows with FIX — the item text becomes the command. The loop self-cleans: rephrased duplicates of the same item collapse into the oldest entry, and when a delegated FIX's reply confirms the work done the row closes itself (plans/promises stay open with the finding noted) |
 | Goals | Quarterly / monthly / weekly goal sheets + today's task board (add, complete, delegate) |
 | Status & Automation | Live service pings with latency LEDs; auto-remediation pings every 5 min and auto-restarts allowlisted services (cooldown + hourly caps) — everything else queues for one-click APPROVE/DENY with Telegram notify |
 | Agent activity | Cron runs + board task feed for the last 48h |
@@ -42,11 +42,11 @@ style setup, but any backend that serves the same simple JSON routes works.
 | Telegram & Voice | Your bots' chats with inline reply, Google Voice texts / missed calls / voicemails with reply-by-email |
 | Notes | Quick-jot card — two-way sync with a Google Tasks list, so jots made on the deck show in the phone's Tasks app and vice versa (delete + edits + checked-off state propagate both ways) |
 | Speak mode | `Alt+5` (or **F**) — the orb fills the screen for TV/kiosk use; hold SPACE to talk, replies are spoken, `Esc` exits |
-| Agent model switcher | A dropdown on the console card switches the model Jarvis's agent turns run on (`hermes chat -m`), live, no restart |
+| Agent model switcher | Settings → Appearance picks the model Jarvis's agent turns run on (`hermes chat -m`), live, no restart |
 | Money | Live tickers (Yahoo/Binance, no login), Stripe balance & payouts, Webull positions, sparklines |
 | Workshop | Describe an object, the LLM emits structured scene JSON, deterministic 3D renderer builds it — edit parts by prompt |
 | HUD companion | Frameless transparent always-on-top Electron overlay (Alt+Space) — mini orb, down services, top tasks |
-| Settings | Persona, voice picker (edge / Gemini / Fish), API keys (write-only LEDs), card show/hide, HUD opacity |
+| Settings | Persona, voice picker (edge / Gemini / Fish), API keys (write-only LEDs), card show/hide, HUD opacity — wide 3-column layout that fills the screen, connector rows stay readable at any width |
 
 ## Quickstart
 
@@ -191,8 +191,11 @@ Shipped and working:
 - [x] Standalone realtime-TTS demo in `tts/` (merged in from Jarvis-Real-Time-TTS) with local agent execution via `hermes -z` + spoken delegation acks
 - [x] Call escalation: Jarvis places a real phone call (Twilio) — pending-approval items can ring you from the Automation card, "call me about …" in the console triggers one on demand, and `escalate.auto_rem` auto-calls on new pending approvals (30-min per-service cooldown)
 - [x] Speak mode (`Alt+5` / `F`): orb fills the screen for TV/kiosk use — push-to-talk and spoken replies unchanged
-- [x] Agent model switcher: console dropdown switches the agent's model live (voice chat keeps its own fast model)
-- [x] Tagged [v0.4.0](https://github.com/DeezGit21/jarvis-deck/releases/tag/v0.4.0)
+- [x] Agent model switcher: Settings → Appearance switches the agent's model live (voice chat keeps its own fast model)
+- [x] Advisor auto-resolve: when a delegated FIX's agent reply confirms the goal is met, the accountability row closes itself (verified via one fast LLM classification; plans/promises stay open with the finding noted) — with an honest `Running… Ns` wait line scoped to the row's own exchange
+- [x] Accountability dedupe: rephrased duplicates of the same item collapse into the oldest entry, on read and at creation (token-overlap similarity, calibrated so real twins merge and distinct items never do)
+- [x] Settings: wide 3-column layout that fills the screen (was a 1280px cap with dead margins), connector rows readable at any width (container-query split, no clipped buttons)
+- [x] Tagged [v0.4.1](https://github.com/DeezGit21/jarvis-deck/releases/tag/v0.4.1)
 
 ## License
 

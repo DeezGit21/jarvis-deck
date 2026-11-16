@@ -1,7 +1,7 @@
 {
   "name": "jarvis-deck",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "type": "module",
   "description": "JARVIS Deck — open-source standalone control deck for your personal agent: neural plasma orb, memory galaxy, voice console.",
   "scripts": {

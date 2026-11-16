@@ -2146,6 +2146,55 @@ def _rec_id(text: str) -> str:
     return _hashlib.sha1(_re.sub(r"\s+", " ", text.strip().lower()).encode()).hexdigest()[:10]
 
 
+_SIM_STOPWORDS = set(
+    "the a an on of and to for in is are was were be been with at by from as that "
+    "this it its not now still when then than or if so we i you your our their "
+    "there here has have had do does did done just only also very more most".split()
+)
+
+
+def _texts_similar(a: str, b: str) -> bool:
+    """Fuzzy same-item test: the advisor rephrases the same underlying fix on
+    different days, so exact-hash ids alone can't catch the repeats. Token
+    overlap (significant words, stopwords stripped) over the shorter text:
+    calibrated on the live ledger — same-item rephrasings land 0.39-0.98,
+    genuinely different items max 0.07."""
+    ta = {w for w in _re.sub(r"[^a-z0-9]+", " ", a.lower()).split()
+          if len(w) >= 3 and w not in _SIM_STOPWORDS}
+    tb = {w for w in _re.sub(r"[^a-z0-9]+", " ", b.lower()).split()
+          if len(w) >= 3 and w not in _SIM_STOPWORDS}
+    if not ta or not tb:
+        return False
+    inter = len(ta & tb)
+    return inter >= 4 and inter / min(len(ta), len(tb)) >= 0.3
+
+
+def _dedupe_recs() -> list[dict]:
+    """Standard protocol for the accountability loop: collapse repeat items.
+
+    Group open recs by text similarity, keep the OLDEST rec in each group,
+    delete the newer duplicates from the ledger. Runs on every accountability
+    read, so the card can never show stacked repeats of the same item."""
+    recs = _load_recs()
+    open_recs = [r for r in recs if r.get("status") == "open"]
+    if len(open_recs) < 2:
+        return recs
+    open_sorted = sorted(open_recs, key=lambda r: (str(r.get("created") or "9999"),))
+    kept: list[dict] = []
+    drop_ids: set[str] = set()
+    for r in open_sorted:
+        twin = next((k for k in kept if _texts_similar(k.get("text", ""), r.get("text", ""))), None)
+        if twin is None:
+            kept.append(r)
+        else:
+            drop_ids.add(str(r.get("id")))
+    if not drop_ids:
+        return recs
+    recs = [r for r in recs if str(r.get("id")) not in drop_ids]
+    _save_recs(recs)
+    return recs
+
+
 def _age_days(iso_date: str) -> int:
     try:
         return max(0, (_dt.date.fromisoformat(_local_date()) - _dt.date.fromisoformat(iso_date)).days)
@@ -2154,9 +2203,12 @@ def _age_days(iso_date: str) -> int:
 
 
 def _accountability() -> list[dict]:
-    """Deterministic loop: every open rec, oldest first, with days-ignored."""
+    """Deterministic loop: every open rec, oldest first, with days-ignored.
+    Standard protocol: repeat items (the advisor rephrases the same fix on
+    different days) collapse to the OLDEST row; newer duplicates are deleted
+    from the ledger on every read (_dedupe_recs)."""
     rows = []
-    for r in _load_recs():
+    for r in _dedupe_recs():
         if r.get("status") != "open":
             continue
         age = _age_days(r.get("created", _local_date()))
@@ -2253,9 +2305,19 @@ def advisor_generate():
         tier = a.get("tier") if a.get("tier") in (1, 2, 3) else 3
         existing = by_id.get(rid)
         if existing is None:
-            rec = {"id": rid, "text": text, "tier": tier, "created": today,
-                   "last_shown": today, "status": "open"}
-            recs.append(rec)
+            # same item rephrased across days? merge into the OLDEST open rec
+            # instead of creating a duplicate (standard protocol — matches
+            # _dedupe_recs, which prunes any that slip through)
+            twin = next((r for r in recs if r.get("status") == "open"
+                         and _texts_similar(r.get("text", ""), text)), None)
+            if twin is not None:
+                twin["tier"] = tier
+                twin["last_shown"] = today
+                rec = twin
+            else:
+                rec = {"id": rid, "text": text, "tier": tier, "created": today,
+                       "last_shown": today, "status": "open"}
+                recs.append(rec)
         elif existing.get("status") == "open":
             existing["last_shown"] = today
             existing["tier"] = tier
@@ -3715,6 +3777,39 @@ def notes_delete(body: dict = Body(...)):
     return {"ok": True, "removed": nid}
 
 
+@router.put("/notes")
+def notes_edit(body: dict = Body(...)):
+    """Edit a note's text. The edit must land in BOTH stores — the pull pass
+    adopts remote edits for any note with a task_id, so a local-only change
+    would be overwritten on the next sync."""
+    nid = str(body.get("id") or "")
+    text = str(body.get("text") or "").strip()
+    if not nid or not text:
+        raise HTTPException(status_code=400, detail="id and text are required")
+    text = text[:4000]
+    with _NOTES_LOCK:
+        notes = _notes_load()
+        note = next((n for n in notes if n.get("id") == nid), None)
+        if note is None:
+            raise HTTPException(status_code=404, detail="note not found")
+        note["text"] = text
+        _notes_save(notes)
+        if note.get("task_id"):
+            try:
+                tid = _notes_tasklist_id()
+                if tid:
+                    lines = text.split("\n", 1)
+                    payload = {"title": lines[0].strip()[:1000] or "(note)"}
+                    if len(lines) > 1 and lines[1].strip():
+                        payload["notes"] = lines[1].strip()
+                    _notes_gws(["tasks", "tasks", "patch", "--params", json.dumps(
+                        {"tasklist": tid, "task": note["task_id"]}),
+                        "--json", json.dumps(payload)])
+            except Exception:  # noqa: BLE001 — local edit already saved
+                pass
+    return {"ok": True, "id": nid, "text": text}
+
+
 # remember/forget fast-paths for /command — no agent call needed
 _REMEMBER_RE = re.compile(r"^(?:/remember|please remember|remember)(?: that|:| this)?\s+(.+)$", re.IGNORECASE | re.DOTALL)
 _FORGET_RE = re.compile(r"^/forget\s+(.+)$", re.IGNORECASE | re.DOTALL)
@@ -4160,9 +4255,10 @@ def _escalate_cmd(query: str) -> dict | None:
 
 # ---------------------------------------------------------------- agent model switcher
 #
-# The console's agent turn runs `hermes chat`; the -m flag overrides the model
-# for that run (Hermes resolves the provider from the model id). The selection
-# lives in settings.json so it survives restarts; empty = the profile default.
+# Console agent turns run `hermes chat`; the -m flag overrides the model for
+# that run (Hermes resolves the provider from the model id). The switcher UI
+# lives in Settings -> Appearance; the selection lives in settings.json so it
+# survives restarts; empty = the profile default.
 
 _MODEL_SWITCH_CFG = _CFG.get("model_switcher") if isinstance(_CFG.get("model_switcher"), dict) else {}
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,119}$")
