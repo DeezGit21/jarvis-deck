@@ -2272,9 +2272,26 @@ def advisor():
             generated_at = data.get("generated_at")
         except (json.JSONDecodeError, OSError):
             pass
-    recs = {r["id"]: r for r in _load_recs()}
+    recs_list = _load_recs()
+    recs = {r["id"]: r for r in recs_list}
     for a in actions:
         r = recs.get(a.get("id"))
+        if r is None:
+            # stale cached id — the rec was deduped into an older twin after
+            # this cache was written. Re-bind to the live twin so Done/Kill
+            # hit a real ledger row instead of 404ing (a dead id made the row
+            # permanently unresolvable from the UI). Open twins win; otherwise
+            # the most recently closed one, so a handled item's cached row
+            # inherits its closed status and leaves the advisor.
+            twins = [x for x in recs_list
+                     if _texts_similar(x.get("text", ""), str(a.get("text", "")))]
+            twin = next((x for x in twins if x.get("status") == "open"), None)
+            if twin is None:
+                closed = [x for x in twins if x.get("closed_date")]
+                twin = max(closed, key=lambda x: str(x.get("closed_date")), default=None)
+            if twin is not None:
+                a["id"] = twin["id"]
+                r = twin
         if r:
             a["status"] = r.get("status")
     return {"date": _local_date(), "actions": actions, "generated_at": generated_at,

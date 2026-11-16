@@ -3145,6 +3145,7 @@ function AdvisorCard() {
   // shows his live status in place (same pattern as ActionRow's mini-term)
   const [fixId, setFixId] = useState(null)
   const [fixOutcome, setFixOutcome] = useState(null)
+  const [rowErr, setRowErr] = useState(null)
   const [, forceFix] = useState(0)
   // same scoping rule as ActionRow: only replies appended AFTER this row's
   // dispatch belong in the inline terminal — never the global last reply
@@ -3199,12 +3200,17 @@ function AdvisorCard() {
 
   async function act(id, action) {
     setBusyId(id)
+    setRowErr(null)
     haptic('tap')
     OrbBus.set('working')
     try {
       await REST('/advisor/action', { method: 'POST', body: { id, action } })
       qc.invalidateQueries({ queryKey: ['agentos', 'advisor'] })
-    } catch (e) { /* row stays open; error visible on next refetch */ }
+      advQ.refetch() // stub invalidateQueries is weak — refetch so the row leaves now
+    } catch (e) {
+      // a swallowed failure read as a dead button — surface it instead
+      setRowErr((e && e.message) || String(e))
+    }
     setBusyId(null)
     OrbBus.set('idle')
   }
@@ -3217,10 +3223,12 @@ function AdvisorCard() {
   const shownIds = new Set(actions.map(a => a.id))
   const loopRows = accountability.filter(r => !shownIds.has(r.id))
 
-  // Mood: P1 item → alert (overrides degraded from services)
+  // Mood: P1 item → alert (overrides degraded from services); when the last
+  // P1 closes, hand mood back (services re-assert degraded on their next poll)
   useEffect(() => {
     const hasP1 = actions.some(a => a.tier === 1 && (!a.status || a.status === 'open'))
     if (hasP1) OrbBus.setMood('alert')
+    else if (OrbBus.mood() === 'alert') OrbBus.setMood('ok')
   }, [actions])
 
   return jsx(AoCard, {
@@ -3238,6 +3246,7 @@ function AdvisorCard() {
         'Chief-of-staff pass — reading scout data + ledger…'
       ] }),
       genState && genState !== 'running' && jsx('div', { className: 'text-xs text-[#f85149]', children: 'Advisor error: ' + genState }),
+      rowErr && jsx('div', { className: 'text-xs text-[#f85149]', children: 'Action failed: ' + rowErr }),
       advQ.isLoading && jsxs('div', { className: 'space-y-2', children: [
         jsx(Skel, { h: '2.2rem', w: '100%' }),
         jsx(Skel, { h: '2.2rem', w: '94%', delay: 120 })
