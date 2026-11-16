@@ -1045,6 +1045,7 @@ const Tts = {
   // Neural voice via the backend /tts endpoint (edge-tts, British male);
   // falls back to browser speechSynthesis when the endpoint is missing.
   async _speakAsync(clean, onEnd) {
+    var audio = null
     const done = () => {
       if (OrbBus.state === 'speaking') OrbBus.set('idle')
       if (onEnd) { try { onEnd() } catch { /* ignore */ } }
@@ -1053,7 +1054,7 @@ const Tts = {
       // Streaming GET: the browser's audio element buffers and starts playing
       // as edge-tts chunks arrive — first sound well under a second.
       const url = '/api/plugins/agentos/tts?text=' + encodeURIComponent(clean)
-      const audio = new Audio(url)
+      audio = new Audio(url)
       audio.volume = this.vol()
       this._audio = audio
       audio.onended = done
@@ -2376,7 +2377,7 @@ function CalendarCard() {
                       jsx('span', { className: 'w-16 shrink-0 font-mono text-[0.8125rem] text-(--ui-text-tertiary)', children: fmtWhen(e.when, e.all_day) }),
                       jsxs('span', { className: 'min-w-0 flex-1 truncate text-(--ui-text-secondary)', children: [
                         e.summary,
-                        e.calendar && !/primary/i.test(e.calendar) && jsx('span', { className: 'ml-1.5 text-[0.75rem] text-(--ui-text-quaternary)', children: e.calendar })
+                        e.calendar && !/primary/i.test(e.calendar) && jsx('span', { className: 'ml-1.5 hidden text-[0.75rem] text-(--ui-text-quaternary) sm:inline', children: e.calendar })
                       ] }),
                       e.id && jsx('button', {
                         type: 'button',
@@ -2468,7 +2469,7 @@ function MailCard() {
                     jsxs('span', { className: 'flex items-baseline gap-2', children: [
                       jsx('span', { className: 'shrink-0 max-w-[9rem] truncate text-xs font-semibold text-(--ui-text-primary)', children: m.from || '(unknown)' }),
                       jsx('span', { className: 'truncate text-xs text-(--ui-text-secondary)', children: m.subject }),
-                      m.date && jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: m.date })
+                      m.date && jsx('span', { className: 'ml-auto shrink-0 font-mono text-[0.75rem] text-(--ui-text-quaternary)', children: fmtMailWhen(m.date) })
                     ] }),
                     m.snippet && jsx('div', { className: 'mt-0.5 truncate text-[0.75rem] text-(--ui-text-tertiary)', children: m.snippet })
                   ] }),
@@ -4512,6 +4513,15 @@ function fmtAgo(isoOrMs) {
   const h = Math.floor(m / 60)
   if (h < 48) return h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '') + ' ago'
   return Math.floor(h / 24) + 'd ago'
+}
+
+// RFC email date -> compact "Nov 16 · 03:00" (full stamps blow out narrow cards)
+function fmtMailWhen(s) {
+  const t = Date.parse(String(s || ''))
+  if (!isFinite(t)) return String(s || '').slice(0, 16)
+  const d = new Date(t)
+  const y = d.getFullYear() === new Date().getFullYear() ? '' : ' ' + d.getFullYear()
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + y + ' \u00b7 ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 // ------------------------------------------------------------ service health drawer
