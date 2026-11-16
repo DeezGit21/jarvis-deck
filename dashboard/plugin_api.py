@@ -2289,6 +2289,58 @@ def advisor_action(body: dict = Body(...)):
     raise HTTPException(status_code=404, detail="recommendation not found or not open")
 
 
+ADVISOR_RESOLVE_PROMPT = """Decide whether JARVIS's reply means the TASK below is handled.
+
+TASK: {task}
+
+JARVIS'S REPLY (his findings after working on it): {reply}
+
+Rules:
+- resolved = true ONLY if the task's goal is confirmed met: verified working, fixed,
+  already correct, or nothing left to do. A reply that merely PLANS or promises future
+  work ("I will...", "next step is...") is NOT resolved.
+- resolved = false when work remains, something failed, or the reply is inconclusive.
+- note: one short sentence (max 140 chars) stating the actual finding/outcome.
+
+Return STRICT JSON only — no markdown fences, no commentary:
+{{"resolved": true, "note": "..."}}"""
+
+
+@router.post("/advisor/resolve")
+def advisor_resolve(body: dict = Body(...)):
+    """Close a rec (or record its finding) from JARVIS's own delegation output.
+
+    Called automatically after an advisor row's delegate/fix agent turn: one fast
+    completion classifies the reply — resolved rows leave the advisor immediately,
+    open rows keep their latest finding visible."""
+    rid = str(body.get("id") or "")
+    reply = str(body.get("reply") or "")[:4000]
+    if not rid or not reply.strip():
+        raise HTTPException(status_code=400, detail="id and reply required")
+    recs = _load_recs()
+    rec = next((r for r in recs if r.get("id") == rid), None)
+    if not rec or rec.get("status") != "open":
+        return {"ok": False, "resolved": False, "note": "row already closed"}
+    prompt = ADVISOR_RESOLVE_PROMPT.format(task=rec.get("text", "")[:1500], reply=reply[:2500])
+    try:
+        out = _openrouter_complete([{"role": "user", "content": prompt}], timeout=30)
+    except HTTPException as e:
+        return {"ok": False, "resolved": False, "note": f"status check failed: {e.detail}"}
+    data = _extract_json(out)
+    if not data or not isinstance(data.get("resolved"), bool):
+        return {"ok": False, "resolved": False, "note": "status check returned no verdict"}
+    note = str(data.get("note") or "")[:200]
+    if data.get("resolved"):
+        rec["status"] = "done"
+        rec["closed_date"] = _local_date()
+        rec["resolved_note"] = note
+    else:
+        rec["last_finding"] = note
+        rec["finding_date"] = _local_date()
+    _save_recs(recs)
+    return {"ok": True, "resolved": bool(data.get("resolved")), "note": note, "status": rec["status"]}
+
+
 # ---------------------------------------------------------------- tools (orbit ring)
 
 def _config_file() -> Path:

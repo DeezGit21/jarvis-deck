@@ -3038,14 +3038,24 @@ const TIER_STYLE = {
   3: { label: 'P3', cls: 'border-[#d29922]/40 bg-[#d2992211] text-[#d29922]' }
 }
 
-function ActionRow({ a, busy, onDone, onKill }) {
+function ActionRow({ a, busy, onDone, onKill, onResolved }) {
   const tier = TIER_STYLE[a.tier] || TIER_STYLE[3]
   const [cmdBusy, setCmdBusy] = useState(false)
+  const [resolving, setResolving] = useState(false)
+  const [outcome, setOutcome] = useState(null)
   const [, force] = useState(0)
+  // scope the inline terminal to THIS row's exchange: index where the console
+  // was when we dispatched — replies appended after it are ours. Reading the
+  // global last jarvis reply instead showed the PREVIOUS conversation's answer
+  // under the row (D saw an unrelated email summary while a delegate ran).
+  const startLen = useRef(-1)
+  const t0 = useRef(0)
   useEffect(() => {
-    if (!cmdBusy) return undefined
-    return ConsoleStore.subscribe(() => force(v => v + 1))
-  }, [cmdBusy])
+    if (!cmdBusy && !resolving) return undefined
+    const un = ConsoleStore.subscribe(() => force(v => v + 1))
+    const iv = setInterval(() => force(v => v + 1), 1000) // honest elapsed tick
+    return () => { un(); clearInterval(iv) }
+  }, [cmdBusy, resolving])
   const txt = (a.text || '').toLowerCase()
   const hasScript = /\.py\b|run\s|script/.test(txt)
   const hasDown = /down|port|refused|502|winerror/.test(txt)
@@ -3054,12 +3064,35 @@ function ActionRow({ a, busy, onDone, onKill }) {
   const cmd = kind === 'run' ? 'run python ' + (a.text.match(/([\w_.-]+\.py)/)?.[1] || 'script')
     : kind === 'restart' ? 'restart service ' + (a.text.match(/['\u2018\u2019]([^'\u2018\u2019]+)['\u2018\u2019]/)?.[1] || 'unknown')
     : a.text
-  const recentMsgs = ConsoleStore.msgs.filter(m => m.role === 'jarvis').slice(-3)
-  const lastReply = recentMsgs.length > 0 ? recentMsgs[recentMsgs.length - 1].text : ''
+  const myReply = cmdBusy && startLen.current >= 0
+    ? (ConsoleStore.msgs.slice(startLen.current).filter(m => m.role === 'jarvis').pop() || {}).text || ''
+    : ''
+  const waitTxt = 'Running\u2026 ' + Math.max(0, Math.round((Date.now() - t0.current) / 1000)) + 's'
+  // advisor rows live-update from Jarvis's findings: his delegation reply is
+  // classified once — resolved rows leave the advisor, open rows show the note
   async function doAction() {
+    startLen.current = ConsoleStore.msgs.length
+    t0.current = Date.now()
     setCmdBusy(true)
-    await ConsoleStore.send(cmd)
+    setOutcome(null)
+    const ok = await ConsoleStore.send(cmd)
     setCmdBusy(false)
+    if (!ok) return
+    const reply = (ConsoleStore.msgs.slice(startLen.current).filter(m => m.role === 'jarvis').pop() || {}).text || ''
+    if (!reply) return
+    setResolving(true)
+    let res = null
+    try {
+      res = await REST('/advisor/resolve', { method: 'POST', body: { id: a.id, reply } })
+    } catch (e) { /* row stays open; note skipped */ }
+    setResolving(false)
+    if (res && res.ok) {
+      const note = (res.note || '').trim()
+      setOutcome(res.resolved ? '\u2713 resolved' + (note ? ' \u2014 ' + note : '') : (note ? 'still open \u2014 ' + note : 'still open'))
+      if (res.resolved && onResolved) onResolved()
+      const mine = res.resolved ? '\u2713 resolved' + (note ? ' \u2014 ' + note : '') : (note ? 'still open \u2014 ' + note : 'still open')
+      setTimeout(() => setOutcome(cur => (cur === mine ? null : cur)), 8000)
+    }
   }
   return jsxs('div', {
     className: 'flex flex-wrap items-start gap-2 rounded-md border border-(--ui-stroke-secondary) bg-(--ui-tertiary-background) p-2',
@@ -3069,7 +3102,8 @@ function ActionRow({ a, busy, onDone, onKill }) {
       jsx('span', { className: 'mt-0.5 shrink-0 rounded border px-1.5 py-0.5 font-mono text-[0.78rem] font-bold ' + tier.cls, children: tier.label }),
       jsx('div', { className: 'ao-row-text', children: [
         jsx('span', { className: 'block text-sm leading-snug text-(--ui-text-primary) ' + (a.status && a.status !== 'open' ? 'line-through opacity-50' : ''), children: a.text }),
-        cmdBusy && jsx('div', { className: 'ao-mini-term', children: lastReply || 'Running\u2026' })
+        (cmdBusy || resolving || outcome) && jsx('div', { className: 'ao-mini-term',
+          children: cmdBusy ? (myReply || waitTxt) : resolving ? 'Checking findings\u2026' : outcome })
       ] }),
       a.status === 'open' || !a.status ? jsxs('div', { className: 'ao-row-actions flex shrink-0 gap-1', children: [
         jsx('button', {
@@ -3110,20 +3144,44 @@ function AdvisorCard() {
   // accountability rows: 'fix' hands the item to Jarvis via the console and
   // shows his live status in place (same pattern as ActionRow's mini-term)
   const [fixId, setFixId] = useState(null)
+  const [fixOutcome, setFixOutcome] = useState(null)
   const [, forceFix] = useState(0)
+  // same scoping rule as ActionRow: only replies appended AFTER this row's
+  // dispatch belong in the inline terminal — never the global last reply
+  const fixStart = useRef(-1)
+  const fixT0 = useRef(0)
   useEffect(() => {
     if (!fixId) return undefined
-    return ConsoleStore.subscribe(() => forceFix(v => v + 1))
+    const un = ConsoleStore.subscribe(() => forceFix(v => v + 1))
+    const iv = setInterval(() => forceFix(v => v + 1), 1000)
+    return () => { un(); clearInterval(iv) }
   }, [fixId])
-  const lastFixReply = (() => {
-    const msgs = ConsoleStore.msgs.filter(m => m.role === 'jarvis')
-    return msgs.length ? msgs[msgs.length - 1].text : ''
-  })()
+  const fixReply = fixId && fixStart.current >= 0
+    ? (ConsoleStore.msgs.slice(fixStart.current).filter(m => m.role === 'jarvis').pop() || {}).text || ''
+    : ''
+  const fixWait = 'Handing to Jarvis \u2014 working\u2026 ' + Math.max(0, Math.round((Date.now() - fixT0.current) / 1000)) + 's'
   async function fixRow(r) {
     haptic('tap')
+    fixStart.current = ConsoleStore.msgs.length
+    fixT0.current = Date.now()
     setFixId(r.id)
-    await ConsoleStore.send(r.text)
-    // keep his status visible briefly, then dismiss
+    setFixOutcome(null)
+    const ok = await ConsoleStore.send(r.text)
+    // classify his findings: resolved rows leave the advisor, open rows keep the note
+    let res = null
+    if (ok) {
+      const reply = (ConsoleStore.msgs.slice(fixStart.current).filter(m => m.role === 'jarvis').pop() || {}).text || ''
+      if (reply) {
+        try { res = await REST('/advisor/resolve', { method: 'POST', body: { id: r.id, reply } }) } catch (e) { /* row stays open */ }
+      }
+    }
+    if (res && res.ok) {
+      const note = (res.note || '').trim()
+      const mine = res.resolved ? '\u2713 resolved' + (note ? ' \u2014 ' + note : '') : (note ? 'still open \u2014 ' + note : 'still open')
+      setFixOutcome(mine)
+      if (res.resolved) { qc.invalidateQueries({ queryKey: ['agentos', 'advisor'] }); advQ.refetch() }
+      setTimeout(() => setFixOutcome(cur => (cur === mine ? null : cur)), 8000)
+    }
     setTimeout(() => setFixId(cur => (cur === r.id ? null : cur)), 8000)
   }
 
@@ -3152,7 +3210,9 @@ function AdvisorCard() {
   }
 
   const d = advQ.data
-  const actions = (d && d.actions) || []
+  // resolved/killed rows leave the advisor immediately — status is overlaid
+  // live from the rec ledger (Jarvis's own findings close rows via /advisor/resolve)
+  const actions = ((d && d.actions) || []).filter(a => !a.status || a.status === 'open')
   const accountability = (d && d.accountability) || []
   const shownIds = new Set(actions.map(a => a.id))
   const loopRows = accountability.filter(r => !shownIds.has(r.id))
@@ -3183,7 +3243,7 @@ function AdvisorCard() {
         jsx(Skel, { h: '2.2rem', w: '94%', delay: 120 })
       ] }),
       !advQ.isLoading && !genState && actions.length === 0 && jsx('div', { className: 'text-sm text-(--ui-text-tertiary)', children: 'No advisor run yet today. Generate to get your top three.' }),
-      actions.map(a => jsx(ActionRow, { a, busy: busyId === a.id, onDone: id => act(id, 'done'), onKill: id => act(id, 'kill') })),
+      actions.map(a => jsx(ActionRow, { a, busy: busyId === a.id, onDone: id => act(id, 'done'), onKill: id => act(id, 'kill'), onResolved: () => { qc.invalidateQueries({ queryKey: ['agentos', 'advisor'] }); advQ.refetch() } })),
       loopRows.length > 0 && jsxs('div', { className: 'mt-1 border-t border-(--ui-stroke-secondary) pt-2', children: [
         jsxs('div', { className: 'mb-1.5 font-mono text-[0.78rem] uppercase tracking-wider text-(--ui-text-tertiary)', children: [
           'accountability loop — ', loopRows.length, ' open'
@@ -3199,7 +3259,8 @@ function AdvisorCard() {
               children: r.escalated ? '⚠ ' + r.age_days + 'd ignored' : r.age_days + 'd'
             }),
             jsx('span', { className: 'min-w-0 flex-1 text-xs leading-snug text-(--ui-text-secondary)', children: r.text }),
-            fixId === r.id && jsx('div', { className: 'w-full ao-mini-term', children: lastFixReply || 'Handing to Jarvis — working…' }),
+            fixId === r.id && jsx('div', { className: 'w-full ao-mini-term',
+              children: fixOutcome || (fixReply || fixWait) }),
             jsxs('div', { className: 'ao-row-actions flex shrink-0 gap-1', children: [
               jsx('button', {
                 disabled: busyId === r.id || fixId === r.id,
